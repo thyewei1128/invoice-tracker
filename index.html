@@ -74,6 +74,11 @@
   .badge.clickable:hover { outline: 2px solid currentColor; }
   .hint { background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
   th { background: var(--accent-soft); text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; color: var(--accent); white-space: nowrap; }
+  th.sortable { cursor: pointer; user-select: none; }
+  th.sortable:hover { background: var(--tan-2); }
+  .pager { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .pager select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--card); }
+  button:disabled { opacity: 0.4; cursor: default; }
   td { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
   tr.row:hover { background: #FBF7F0; cursor: pointer; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -187,9 +192,9 @@
 <div class="cards" id="summaryCards"></div>
 
 <div class="toolbar">
-  <input type="text" id="search" placeholder="Search company…" oninput="render()">
-  <select id="filterPic" onchange="render()"><option value="">All Agents</option></select>
-  <select id="filterStatus" onchange="render()">
+  <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
+  <select id="filterPic" onchange="onFilterChange()"><option value="">All Agents</option></select>
+  <select id="filterStatus" onchange="onFilterChange()">
     <option value="">All status</option>
     <option value="open">Open</option>
     <option value="closed">Closed</option>
@@ -327,8 +332,23 @@ function setRange(v) {
   rangeMode = v;
   document.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.r === v));
   document.getElementById('customRange').style.display = v === 'custom' ? 'inline-flex' : 'none';
+  page = 1;
   render();
 }
+
+/* ---------- table sorting & paging ---------- */
+let sortKey = 'date', sortDir = -1;   // newest first by default
+let page = 1, perPage = 10;
+
+function setSort(k) {
+  if (sortKey === k) sortDir = -sortDir;
+  else { sortKey = k; sortDir = (k === 'company' || k === 'pic') ? 1 : (k === 'date' ? -1 : 1); }
+  page = 1;
+  render();
+}
+function gotoPage(p) { page = p; render(); }
+function setPerPage(v) { perPage = Number(v); page = 1; render(); }
+function onFilterChange() { page = 1; render(); }
 
 function computed(c) {
   const amount = Number(c.amount) || 0;
@@ -440,7 +460,24 @@ function render() {
   if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
   if (fPic) list = list.filter(r => r.c.pic === fPic);
   if (fStatus) list = list.filter(r => fStatus === 'closed' ? r.x.closed : !r.x.closed);
-  list.sort((a, b) => (b.c.date || '').localeCompare(a.c.date || ''));
+
+  // sort by the clicked column
+  const sortVal = ({ c, x }) => {
+    switch (sortKey) {
+      case 'date': return c.date || '';
+      case 'company': return (c.company || '').toLowerCase();
+      case 'pic': return (c.pic || '').toLowerCase();
+      case 'amount': return x.amount;
+      case 'invoice': return c.invoiceIssued ? 1 : 0;
+      case 'customer': return x.expectedCustomer > 0 ? x.recvCustomer / x.expectedCustomer : 1;
+      case 'supplier': return x.expectedSupplier > 0 ? x.recvSupplier / x.expectedSupplier : 1;
+      case 'payout': return x.expectedPayout > 0 ? x.paidClient / x.expectedPayout : 1;
+      case 'profit': return x.profitAmount;
+      case 'status': return x.closed ? 1 : 0;
+      default: return 0;
+    }
+  };
+  list.sort((a, b) => { const va = sortVal(a), vb = sortVal(b); return (va < vb ? -1 : va > vb ? 1 : 0) * sortDir; });
 
   const wrap = document.getElementById('tableWrap');
   if (!list.length) {
@@ -448,14 +485,32 @@ function render() {
     return;
   }
 
+  // paging
+  const total = list.length;
+  const pages = Math.max(1, Math.ceil(total / perPage));
+  if (page > pages) page = pages;
+  if (page < 1) page = 1;
+  const start = (page - 1) * perPage;
+  const pageList = list.slice(start, start + perPage);
+
+  const arrow = k => sortKey === k ? (sortDir === 1 ? ' ▲' : ' ▼') : '';
+
   wrap.innerHTML = `<table>
     <thead><tr>
-      <th>Date</th><th>Company</th><th>Agent</th><th class="num">Amount</th>
-      <th>Invoice</th><th>Customer Paid</th><th>Supplier Cash In</th><th>Paid to Client</th>
-      <th class="num">Profit</th><th>Status</th><th class="actions-col">Action</th>
+      <th class="sortable" onclick="setSort('date')">Date${arrow('date')}</th>
+      <th class="sortable" onclick="setSort('company')">Company${arrow('company')}</th>
+      <th class="sortable" onclick="setSort('pic')">Agent${arrow('pic')}</th>
+      <th class="num sortable" onclick="setSort('amount')">Amount${arrow('amount')}</th>
+      <th class="sortable" onclick="setSort('invoice')">Invoice${arrow('invoice')}</th>
+      <th class="sortable" onclick="setSort('customer')">Customer Paid${arrow('customer')}</th>
+      <th class="sortable" onclick="setSort('supplier')">Supplier Cash In${arrow('supplier')}</th>
+      <th class="sortable" onclick="setSort('payout')">Paid to Client${arrow('payout')}</th>
+      <th class="num sortable" onclick="setSort('profit')">Profit${arrow('profit')}</th>
+      <th class="sortable" onclick="setSort('status')">Status${arrow('status')}</th>
+      <th class="actions-col">Action</th>
     </tr></thead>
     <tbody>
-    ${list.map(({ c, x }) => `
+    ${pageList.map(({ c, x }) => `
       <tr class="row" onclick="openDetail('${c.id}')">
         <td>${esc(c.date)}</td>
         <td><b>${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
@@ -476,7 +531,19 @@ function render() {
         </td>
       </tr>`).join('')}
     </tbody>
-  </table>`;
+  </table>
+  <div class="pager">
+    <span>Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total} cases</span>
+    <div class="spacer"></div>
+    <button class="btn-secondary btn-small" ${page <= 1 ? 'disabled' : ''} onclick="gotoPage(${page - 1})">‹ Prev</button>
+    <span>Page ${page} of ${pages}</span>
+    <button class="btn-secondary btn-small" ${page >= pages ? 'disabled' : ''} onclick="gotoPage(${page + 1})">Next ›</button>
+    <select onchange="setPerPage(this.value)">
+      <option value="10" ${perPage === 10 ? 'selected' : ''}>10 per page</option>
+      <option value="20" ${perPage === 20 ? 'selected' : ''}>20 per page</option>
+      <option value="50" ${perPage === 50 ? 'selected' : ''}>50 per page</option>
+    </select>
+  </div>`;
 }
 
 /* ---------- add / edit case ---------- */
