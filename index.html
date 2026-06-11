@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Invoice Tracker</title>
+<style>
+  :root {
+    --bg: #f4f5f7;
+    --card: #ffffff;
+    --text: #1a1d24;
+    --muted: #6b7280;
+    --border: #e2e4e9;
+    --accent: #b8860b;
+    --accent-soft: #fdf3d7;
+    --green: #15803d;
+    --green-soft: #dcfce7;
+    --red: #b91c1c;
+    --red-soft: #fee2e2;
+    --amber: #b45309;
+    --amber-soft: #fef3c7;
+    --blue: #1d4ed8;
+    --blue-soft: #dbeafe;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .card .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .card .value { font-size: 20px; font-weight: 700; }
+  .card .value.green { color: var(--green); }
+  .card .value.red { color: var(--red); }
+  .card .value.amber { color: var(--amber); }
+
+  .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+  .toolbar input[type=text], .toolbar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
+  .toolbar input[type=text] { width: 220px; }
+  .spacer { flex: 1; }
+
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #9a700a; }
+  .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { background: #eef0f3; }
+  .btn-danger { background: var(--red-soft); color: var(--red); }
+  .btn-small { padding: 5px 9px; font-size: 12px; }
+
+  #tableWrap { overflow-x: auto; border-radius: 10px; }
+  table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
+  th.actions-col, td.actions-col { position: sticky; right: 0; background: var(--card); box-shadow: -6px 0 8px -6px rgba(0,0,0,0.18); white-space: nowrap; }
+  th.actions-col { background: var(--accent-soft); }
+  .badge.clickable { cursor: pointer; }
+  .badge.clickable:hover { outline: 2px solid currentColor; }
+  .hint { background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
+  th { background: var(--accent-soft); text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; color: #7a5c06; white-space: nowrap; }
+  td { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+  tr.row:hover { background: #fafbfc; cursor: pointer; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+  .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .badge.full { background: var(--green-soft); color: var(--green); }
+  .badge.partial { background: var(--amber-soft); color: var(--amber); }
+  .badge.none { background: var(--red-soft); color: var(--red); }
+  .badge.closed { background: var(--green); color: #fff; }
+  .badge.open { background: var(--blue-soft); color: var(--blue); }
+  .badge.na { background: #eef0f3; color: var(--muted); }
+
+  .pbar { height: 4px; background: #eef0f3; border-radius: 2px; margin-top: 5px; min-width: 90px; }
+  .pbar > div { height: 100%; border-radius: 2px; background: var(--green); }
+  .legcell .amt { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
+
+  /* Modal */
+  .overlay { position: fixed; inset: 0; background: rgba(20,22,28,0.45); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 50; }
+  .overlay.show { display: flex; }
+  .modal { background: var(--card); border-radius: 14px; width: 100%; max-width: 860px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
+  .modal h2 { font-size: 18px; margin-bottom: 16px; }
+  .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+
+  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
+  .field input, .field select { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  .field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+
+  .calc-preview { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; margin-top: 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+  .calc-preview b { font-variant-numeric: tabular-nums; }
+
+  /* Detail view */
+  .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
+  .detail-head .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0; }
+  .fig { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .fig .label { font-size: 11px; color: var(--muted); }
+  .fig .value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .legs { display: grid; grid-template-columns: 1fr; gap: 14px; }
+  .leg { border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .leg h3 { font-size: 14px; margin-bottom: 2px; }
+  .leg .target { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .leg table { border: none; background: rgba(255,255,255,0.65); }
+  .leg td, .leg th { padding: 6px 8px; font-size: 13px; }
+  .leg th { background: var(--bg); color: var(--muted); }
+  .leg.leg-customer { background: #f3f7ff; border-color: #c3d6f7; border-left: 5px solid var(--blue); }
+  .leg.leg-supplier { background: #f2fbf5; border-color: #bbe5c8; border-left: 5px solid var(--green); }
+  .leg.leg-payout   { background: #fff7ec; border-color: #f1d8ab; border-left: 5px solid var(--amber); }
+  .leg.leg-customer h3 { color: var(--blue); }
+  .leg.leg-supplier h3 { color: var(--green); }
+  .leg.leg-payout h3 { color: var(--amber); }
+  .txn-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  .txn-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
+  .txn-form input.amt { width: 130px; }
+  .txn-form input.note { flex: 1; min-width: 140px; }
+  .leg-status-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+
+  .toggles { display: flex; gap: 18px; margin: 14px 0; flex-wrap: wrap; }
+  .toggles label { display: flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600; cursor: pointer; }
+  .toggles input { width: 17px; height: 17px; accent-color: var(--green); }
+
+  .empty { text-align: center; color: var(--muted); padding: 40px; background: var(--card); border: 1px dashed var(--border); border-radius: 10px; }
+  .footer-note { margin-top: 14px; font-size: 12px; color: var(--muted); }
+
+  .toast-wrap { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 100; align-items: center; }
+  .toast { background: #1a1d24; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .toast.error { background: var(--red); }
+  #storageWarn { display: none; background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
+
+  /* Phone-friendly layout */
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    h1 { font-size: 19px; }
+    .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+    .card { padding: 10px 12px; }
+    .card .value { font-size: 16px; }
+    .toolbar input[type=text] { width: 100%; }
+    .overlay { padding: 12px 6px; }
+    .modal { padding: 16px 14px; }
+    /* 16px inputs stop iPhone auto-zooming when typing */
+    input, select, .txn-form input { font-size: 16px; }
+    .txn-form input.amt { width: 120px; }
+    button { padding: 10px 14px; }
+    .btn-small { padding: 8px 10px; font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+
+<h1>Invoice Tracker</h1>
+<div class="sub">Track each case from invoice issued → customer payment → supplier cash → client payout. Partial payments supported.</div>
+
+<div id="storageWarn">⚠️ This preview window cannot save data permanently — your entries will disappear when you close it. To keep your records, open <b>invoice-tracker.html</b> by double-clicking it in Finder (it opens in Safari/Chrome), or click <b>Backup</b> before closing to download your data.</div>
+
+<div class="cards" id="summaryCards"></div>
+
+<div class="toolbar">
+  <input type="text" id="search" placeholder="Search company…" oninput="render()">
+  <select id="filterPic" onchange="render()"><option value="">All PIC</option></select>
+  <select id="filterStatus" onchange="render()">
+    <option value="">All status</option>
+    <option value="open">Open</option>
+    <option value="closed">Closed</option>
+  </select>
+  <div class="spacer"></div>
+  <button class="btn-secondary" onclick="openCash()">🪙 Cash Book</button>
+  <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
+  <button class="btn-secondary" onclick="exportJSON()">Backup</button>
+  <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Restore</button>
+  <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
+  <button class="btn-primary" onclick="openCaseForm()">+ New Case</button>
+</div>
+
+<div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — there you tick <b>Invoice Issued</b> and key in every payment received from the customer, cash from the supplier, and cash paid to the client (partial amounts are fine). Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case. You can also click the Yes/No under Invoice to flip it directly.</div>
+
+<div id="tableWrap"></div>
+<div class="footer-note">Data is saved automatically in this browser. Use <b>Backup</b> regularly to save a copy of your data as a file, and <b>Restore</b> to load it back.</div>
+
+<!-- Add/Edit case modal -->
+<div class="overlay" id="formOverlay">
+  <div class="modal">
+    <h2 id="formTitle">New Case</h2>
+    <div class="form-grid">
+      <div class="field"><label>Date</label><input type="date" id="f_date"></div>
+      <div class="field"><label>Company</label><input type="text" id="f_company" placeholder="Company name"></div>
+      <div class="field"><label>PIC</label><input type="text" id="f_pic" placeholder="e.g. Jet"></div>
+      <div class="field"><label>Invoice Amount (RM)</label><input type="number" id="f_amount" step="0.01" min="0" oninput="updatePreview()"></div>
+      <div class="field"><label>Selling %</label><input type="number" id="f_selling" step="0.01" min="0" oninput="updatePreview()"></div>
+      <div class="field"><label>Cost %</label><input type="number" id="f_cost" step="0.01" min="0" value="1" oninput="updatePreview()"></div>
+      <div class="field"><label>Referral %</label><input type="number" id="f_referral" step="0.01" min="0" value="0" oninput="updatePreview()"></div>
+      <div class="field"><label>Referral Name (optional)</label><input type="text" id="f_referralName"></div>
+    </div>
+    <div class="calc-preview" id="calcPreview"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOverlay('formOverlay')">Cancel</button>
+      <button class="btn-primary" id="formSaveBtn" onclick="saveCaseForm()">Save Case</button>
+    </div>
+  </div>
+</div>
+
+<!-- Detail modal -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal" id="detailModal"></div>
+</div>
+
+<!-- Cash book modal -->
+<div class="overlay" id="cashOverlay">
+  <div class="modal" id="cashModal"></div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const STORAGE_KEY = 'invoiceTrackerData_v1';
+let cases = [];
+let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
+let editingId = null;
+
+/* ---------- persistence ---------- */
+function load() {
+  try {
+    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
+    if (Array.isArray(data)) { cases = data; adjustments = []; }      // old format
+    else { cases = data?.cases || []; adjustments = data?.adjustments || []; }
+  }
+  catch (e) { cases = []; adjustments = []; }
+  // warn upfront if this environment cannot persist data
+  try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); }
+  catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
+}
+function save() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cases, adjustments })); }
+  catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
+}
+
+function notify(msg, isError) {
+  const d = document.createElement('div');
+  d.className = 'toast' + (isError ? ' error' : '');
+  d.textContent = msg;
+  document.getElementById('toasts').appendChild(d);
+  setTimeout(() => d.remove(), 3500);
+}
+
+/* ---------- helpers ---------- */
+const fmt = n => 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const pct = n => (Number(n) || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 }) + '%';
+const today = () => new Date().toISOString().slice(0, 10);
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sum = txns => (txns || []).reduce((a, t) => a + (Number(t.amount) || 0), 0);
+const TOL = 0.005;
+
+function computed(c) {
+  const amount = Number(c.amount) || 0;
+  const expectedCustomer = amount;                                  // client pays invoice amount
+  const expectedSupplier = amount * (1 - (Number(c.costPct) || 0) / 100);   // cash back from supplier
+  const expectedPayout   = amount * (1 - (Number(c.sellingPct) || 0) / 100); // cash passed to client
+  const referralAmount   = amount * (Number(c.referralPct) || 0) / 100;
+  const profitPct = (Number(c.sellingPct) || 0) - (Number(c.costPct) || 0) - (Number(c.referralPct) || 0);
+  const profitAmount = amount * profitPct / 100;
+
+  const recvCustomer = sum(c.customerPayments);
+  const recvSupplier = sum(c.supplierPayments);
+  const paidClient   = sum(c.clientPayouts);
+
+  const legStatus = (got, target) => target <= TOL ? 'full' : got >= target - TOL ? 'full' : got > TOL ? 'partial' : 'none';
+
+  const sCustomer = legStatus(recvCustomer, expectedCustomer);
+  const sSupplier = legStatus(recvSupplier, expectedSupplier);
+  const sPayout   = legStatus(paidClient, expectedPayout);
+  const referralDone = referralAmount <= TOL || !!c.referralPaid;
+
+  const closed = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
+
+  return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount,
+           profitPct, profitAmount, recvCustomer, recvSupplier, paidClient,
+           sCustomer, sSupplier, sPayout, referralDone, closed };
+}
+
+/* ---------- cash ---------- */
+// Every cash movement: supplier payments IN, client payouts OUT, referral fees OUT,
+// plus manual own-money adjustments. Customer invoice payments are bank, not cash.
+function cashMovements() {
+  const moves = [];
+  for (const c of cases) {
+    const x = computed(c);
+    for (const t of c.supplierPayments || []) moves.push({ date: t.date, amount: +t.amount, label: `Cash in from supplier — ${c.company}`, note: t.note || '' });
+    for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
+    if (c.referralPaid && x.referralAmount > TOL) moves.push({ date: c.referralPaidDate || c.date, amount: -x.referralAmount, label: `Referral fee — ${c.company}${c.referralName ? ' (' + c.referralName + ')' : ''}`, note: '' });
+  }
+  for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.type === 'in' ? 'Own money in' : 'Cash taken out', note: a.note || '', adjId: a.id });
+  moves.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  return moves;
+}
+const cashOnHand = () => cashMovements().reduce((a, m) => a + m.amount, 0);
+
+/* ---------- summary ---------- */
+function renderSummary() {
+  const open = cases.filter(c => !computed(c).closed);
+  const closedCases = cases.filter(c => computed(c).closed);
+  const outstandingCustomer = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedCustomer - x.recvCustomer); }, 0);
+  const outstandingSupplier = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedSupplier - x.recvSupplier); }, 0);
+  const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedPayout - x.paidClient); }, 0);
+  const realized = closedCases.reduce((a, c) => a + computed(c).profitAmount, 0);
+  const pending = open.reduce((a, c) => a + computed(c).profitAmount, 0);
+
+  const cash = cashOnHand();
+  document.getElementById('summaryCards').innerHTML = `
+    <div class="card" style="cursor:pointer; border-color: var(--accent)" onclick="openCash()">
+      <div class="label">Cash on Hand 🪙</div>
+      <div class="value ${cash < 0 ? 'red' : 'green'}">${fmt(cash)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">click for cash book</div>
+    </div>
+    <div class="card"><div class="label">Open Cases</div><div class="value">${open.length}</div></div>
+    <div class="card"><div class="label">Closed Cases</div><div class="value">${closedCases.length}</div></div>
+    <div class="card"><div class="label">Owed by Customers</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
+    <div class="card"><div class="label">Owed by Suppliers</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
+    <div class="card"><div class="label">To Pay Out to Clients</div><div class="value red">${fmt(outstandingPayout)}</div></div>
+    <div class="card"><div class="label">Profit (Closed)</div><div class="value green">${fmt(realized)}</div></div>
+    <div class="card"><div class="label">Profit (Pending)</div><div class="value">${fmt(pending)}</div></div>`;
+}
+
+/* ---------- table ---------- */
+function legBadge(status, got, target) {
+  const labels = { full: 'Full', partial: 'Partial', none: 'No' };
+  const pc = target > 0 ? Math.min(100, got / target * 100) : 100;
+  return `<div class="legcell">
+    <span class="badge ${status}">${labels[status]}</span>
+    <div class="amt">${fmt(got)} / ${fmt(target)}</div>
+    <div class="pbar"><div style="width:${pc}%"></div></div>
+  </div>`;
+}
+
+function render() {
+  renderSummary();
+  // PIC filter options
+  const picSel = document.getElementById('filterPic');
+  const currentPic = picSel.value;
+  const pics = [...new Set(cases.map(c => c.pic).filter(Boolean))].sort();
+  picSel.innerHTML = '<option value="">All PIC</option>' + pics.map(p => `<option ${p === currentPic ? 'selected' : ''} value="${esc(p)}">${esc(p)}</option>`).join('');
+
+  const q = document.getElementById('search').value.trim().toLowerCase();
+  const fPic = picSel.value;
+  const fStatus = document.getElementById('filterStatus').value;
+
+  let list = cases.map(c => ({ c, x: computed(c) }));
+  if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
+  if (fPic) list = list.filter(r => r.c.pic === fPic);
+  if (fStatus) list = list.filter(r => fStatus === 'closed' ? r.x.closed : !r.x.closed);
+  list.sort((a, b) => (b.c.date || '').localeCompare(a.c.date || ''));
+
+  const wrap = document.getElementById('tableWrap');
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty">No cases yet. Click <b>+ New Case</b> to add your first record.</div>`;
+    return;
+  }
+
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Date</th><th>Company</th><th>PIC</th><th class="num">Amount</th>
+      <th>Invoice</th><th>Customer Paid</th><th>Supplier Cash In</th><th>Paid to Client</th>
+      <th class="num">Profit</th><th>Status</th><th class="actions-col">Action</th>
+    </tr></thead>
+    <tbody>
+    ${list.map(({ c, x }) => `
+      <tr class="row" onclick="openDetail('${c.id}')">
+        <td>${esc(c.date)}</td>
+        <td><b>${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
+        <td>${esc(c.pic)}</td>
+        <td class="num">${fmt(x.amount)}</td>
+        <td onclick="event.stopPropagation()">${c.invoiceIssued
+          ? `<span class="badge full clickable" title="Click to change" onclick="toggleInvoice('${c.id}')">Yes</span>`
+          : `<span class="badge none clickable" title="Click to change" onclick="toggleInvoice('${c.id}')">No</span>`}</td>
+        <td>${legBadge(x.sCustomer, x.recvCustomer, x.expectedCustomer)}</td>
+        <td>${legBadge(x.sSupplier, x.recvSupplier, x.expectedSupplier)}</td>
+        <td>${legBadge(x.sPayout, x.paidClient, x.expectedPayout)}</td>
+        <td class="num"><b>${fmt(x.profitAmount)}</b><div style="font-size:11px;color:var(--muted)">${pct(x.profitPct)}</div></td>
+        <td>${x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>'}</td>
+        <td class="actions-col" onclick="event.stopPropagation()">
+          <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">Update</button>
+          <button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button>
+          <button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>
+        </td>
+      </tr>`).join('')}
+    </tbody>
+  </table>`;
+}
+
+/* ---------- add / edit case ---------- */
+function openCaseForm(id) {
+  editingId = id || null;
+  const c = id ? cases.find(c => c.id === id) : null;
+  document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
+  document.getElementById('f_date').value = c ? c.date : today();
+  document.getElementById('f_company').value = c ? c.company : '';
+  document.getElementById('f_pic').value = c ? c.pic : '';
+  document.getElementById('f_amount').value = c ? c.amount : '';
+  document.getElementById('f_selling').value = c ? c.sellingPct : '';
+  document.getElementById('f_cost').value = c ? c.costPct : 1;
+  document.getElementById('f_referral').value = c ? c.referralPct : 0;
+  document.getElementById('f_referralName').value = c ? (c.referralName || '') : '';
+  updatePreview();
+  document.getElementById('formOverlay').classList.add('show');
+}
+
+function updatePreview() {
+  const amount = Number(document.getElementById('f_amount').value) || 0;
+  const selling = Number(document.getElementById('f_selling').value) || 0;
+  const cost = Number(document.getElementById('f_cost').value) || 0;
+  const referral = Number(document.getElementById('f_referral').value) || 0;
+  const profitPct = selling - cost - referral;
+  document.getElementById('calcPreview').innerHTML = `
+    <div>Customer pays: <b>${fmt(amount)}</b></div>
+    <div>Supplier cash in: <b>${fmt(amount * (1 - cost / 100))}</b></div>
+    <div>Pay out to client: <b>${fmt(amount * (1 - selling / 100))}</b></div>
+    <div>Referral fee: <b>${fmt(amount * referral / 100)}</b></div>
+    <div>Profit: <b>${pct(profitPct)} = ${fmt(amount * profitPct / 100)}</b></div>`;
+}
+
+function saveCaseForm() {
+  const company = document.getElementById('f_company').value.trim();
+  const amount = Number(document.getElementById('f_amount').value);
+  if (!company) { notify('Please enter the company name.', true); return; }
+  if (!amount || amount <= 0) { notify('Please enter a valid invoice amount.', true); return; }
+
+  const data = {
+    date: document.getElementById('f_date').value || today(),
+    company,
+    pic: document.getElementById('f_pic').value.trim(),
+    amount,
+    sellingPct: Number(document.getElementById('f_selling').value) || 0,
+    costPct: Number(document.getElementById('f_cost').value) || 0,
+    referralPct: Number(document.getElementById('f_referral').value) || 0,
+    referralName: document.getElementById('f_referralName').value.trim(),
+  };
+
+  if (editingId) {
+    Object.assign(cases.find(c => c.id === editingId), data);
+  } else {
+    cases.push({ id: uid(), invoiceIssued: false, referralPaid: false,
+      customerPayments: [], supplierPayments: [], clientPayouts: [], ...data });
+  }
+  save(); closeOverlay('formOverlay'); render();
+  notify(editingId ? 'Case updated.' : 'Case added — click Update on the row to key in payments.');
+}
+
+let pendingDelete = null;
+function deleteCase(id) {
+  if (pendingDelete !== id) {
+    pendingDelete = id;
+    render();
+    notify('Click the red "Confirm?" button again to delete this case.', true);
+    setTimeout(() => { if (pendingDelete === id) { pendingDelete = null; render(); } }, 5000);
+    return;
+  }
+  pendingDelete = null;
+  cases = cases.filter(c => c.id !== id);
+  save(); render();
+  notify('Case deleted.');
+}
+
+/* ---------- detail / payments ---------- */
+function openDetail(id) {
+  const c = cases.find(c => c.id === id);
+  if (!c) return;
+  const x = computed(c);
+
+  const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
+  const legHTML = (title, listKey, txns, got, target, status) => `
+    <div class="leg ${LEG_CLASS[listKey]}">
+      <div class="leg-status-row">
+        <h3>${title}</h3>
+        <span class="badge ${status}">${{ full: 'Full', partial: 'Partial', none: 'Not yet' }[status]}</span>
+      </div>
+      <div class="target">${listKey === 'clientPayouts' ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
+      ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>
+        ${txns.map(t => `<tr>
+          <td>${esc(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
+          <td><button class="btn-danger btn-small" onclick="deleteTxn('${c.id}','${listKey}','${t.id}')">×</button></td>
+        </tr>`).join('')}
+      </tbody></table>` : ''}
+      <div class="txn-form">
+        <input type="date" id="d_${listKey}_date" value="${today()}">
+        <input type="number" class="amt" id="d_${listKey}_amount" placeholder="Amount (RM)" step="0.01" min="0">
+        <input type="text" class="note" id="d_${listKey}_note" placeholder="Note (optional)">
+        <button class="btn-primary btn-small" onclick="addTxn('${c.id}','${listKey}')">Add Payment</button>
+        ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${c.id}','${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
+      </div>
+    </div>`;
+
+  document.getElementById('detailModal').innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2 style="margin-bottom:0">${esc(c.company)}</h2>
+        <div class="meta">${esc(c.date)} · PIC: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+      </div>
+      ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
+    </div>
+
+    <div class="figures">
+      <div class="fig"><div class="label">Invoice Amount</div><div class="value">${fmt(x.amount)}</div></div>
+      <div class="fig"><div class="label">Selling / Cost / Referral</div><div class="value">${pct(c.sellingPct)} / ${pct(c.costPct)} / ${pct(c.referralPct)}</div></div>
+      <div class="fig"><div class="label">Referral Fee</div><div class="value">${fmt(x.referralAmount)}</div></div>
+      <div class="fig"><div class="label">Profit</div><div class="value" style="color:var(--green)">${fmt(x.profitAmount)} (${pct(x.profitPct)})</div></div>
+    </div>
+
+    <div class="toggles">
+      <label><input type="checkbox" ${c.invoiceIssued ? 'checked' : ''} onchange="toggleFlag('${c.id}','invoiceIssued',this.checked)"> Invoice Issued</label>
+      ${x.referralAmount > TOL ? `<label><input type="checkbox" ${c.referralPaid ? 'checked' : ''} onchange="toggleFlag('${c.id}','referralPaid',this.checked)"> Referral Paid (${fmt(x.referralAmount)})</label>` : ''}
+    </div>
+
+    <div class="legs">
+      ${legHTML('1 · Payment from Customer', 'customerPayments', c.customerPayments, x.recvCustomer, x.expectedCustomer, x.sCustomer)}
+      ${legHTML('2 · Cash from Supplier', 'supplierPayments', c.supplierPayments, x.recvSupplier, x.expectedSupplier, x.sSupplier)}
+      ${legHTML('3 · Cash Paid to Client', 'clientPayouts', c.clientPayouts, x.paidClient, x.expectedPayout, x.sPayout)}
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOverlay('detailOverlay')">Close</button>
+    </div>`;
+  document.getElementById('detailOverlay').classList.add('show');
+}
+
+function toggleInvoice(id) {
+  const c = cases.find(c => c.id === id);
+  c.invoiceIssued = !c.invoiceIssued;
+  save(); render();
+}
+
+function toggleFlag(id, key, val) {
+  const c = cases.find(c => c.id === id);
+  c[key] = val;
+  if (key === 'referralPaid') c.referralPaidDate = val ? today() : undefined;
+  save(); render(); openDetail(id);
+}
+
+/* ---------- cash book ---------- */
+function openCash() {
+  const moves = cashMovements();
+  let running = 0;
+  const rows = moves.map(m => {
+    running += m.amount;
+    return `<tr>
+      <td>${esc(m.date)}</td>
+      <td>${esc(m.label)}${m.note ? `<div style="font-size:11px;color:var(--muted)">${esc(m.note)}</div>` : ''}</td>
+      <td class="num" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'} ${fmt(Math.abs(m.amount))}</td>
+      <td class="num"><b>${fmt(running)}</b></td>
+      <td>${m.adjId ? `<button class="btn-danger btn-small" onclick="deleteAdjustment('${m.adjId}')">×</button>` : ''}</td>
+    </tr>`;
+  }).join('');
+
+  const cash = cashOnHand();
+  document.getElementById('cashModal').innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2 style="margin-bottom:0">Cash Book</h2>
+        <div class="meta">Cash in from suppliers, cash out to clients &amp; referrals, and your own money in/out. Customer invoice payments (bank) are not counted here.</div>
+      </div>
+      <span class="badge ${cash < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Cash on Hand: ${fmt(cash)}</span>
+    </div>
+    ${cash < 0 ? `<div style="margin-top:10px;background:var(--red-soft);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px">You have paid out ${fmt(-cash)} more than the cash recorded coming in — that is your own money currently fronted. Record it with "Own money in" below if you put in capital.</div>` : ''}
+
+    <div class="leg" style="margin-top:16px">
+      <h3>Add own money in / take cash out</h3>
+      <div class="txn-form" style="margin-top:8px">
+        <input type="date" id="adj_date" value="${today()}">
+        <select id="adj_type" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          <option value="in">Own money IN</option>
+          <option value="out">Take cash OUT</option>
+        </select>
+        <input type="number" class="amt" id="adj_amount" placeholder="Amount (RM)" step="0.01" min="0">
+        <input type="text" class="note" id="adj_note" placeholder="Note (e.g. topped up capital)">
+        <button class="btn-primary btn-small" onclick="addAdjustment()">Add</button>
+      </div>
+    </div>
+
+    <div class="leg" style="margin-top:14px">
+      <h3 style="margin-bottom:8px">All cash movements (running balance)</h3>
+      ${moves.length ? `<table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No cash movements yet. They appear automatically when you record supplier payments and client payouts in each case.</div>'}
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="exportCashCSV()">Export Cash CSV</button>
+      <button class="btn-secondary" onclick="closeOverlay('cashOverlay')">Close</button>
+    </div>`;
+  document.getElementById('cashOverlay').classList.add('show');
+}
+
+function addAdjustment() {
+  const amount = Number(document.getElementById('adj_amount').value);
+  if (!amount || amount <= 0) { notify('Please enter an amount.', true); return; }
+  adjustments.push({
+    id: uid(),
+    date: document.getElementById('adj_date').value || today(),
+    type: document.getElementById('adj_type').value,
+    amount,
+    note: document.getElementById('adj_note').value.trim(),
+  });
+  save(); render(); openCash();
+}
+
+function deleteAdjustment(id) {
+  adjustments = adjustments.filter(a => a.id !== id);
+  save(); render(); openCash();
+}
+
+function exportCashCSV() {
+  let running = 0;
+  const rows = [['Date', 'Description', 'Note', 'Cash In', 'Cash Out', 'Balance']];
+  for (const m of cashMovements()) {
+    running += m.amount;
+    rows.push([m.date, m.label, m.note, m.amount >= 0 ? m.amount.toFixed(2) : '', m.amount < 0 ? (-m.amount).toFixed(2) : '', running.toFixed(2)]);
+  }
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(`cash-book-${today()}.csv`, csv, 'text/csv');
+}
+
+function addTxn(id, listKey, presetAmount) {
+  const c = cases.find(c => c.id === id);
+  const amount = presetAmount !== undefined ? presetAmount : Number(document.getElementById(`d_${listKey}_amount`).value);
+  if (!amount || amount <= 0) { notify('Please enter a payment amount.', true); return; }
+  const date = document.getElementById(`d_${listKey}_date`).value || today();
+  const note = document.getElementById(`d_${listKey}_note`).value.trim();
+  c[listKey].push({ id: uid(), date, amount, note });
+  save(); render(); openDetail(id);
+}
+
+function deleteTxn(id, listKey, txnId) {
+  const c = cases.find(c => c.id === id);
+  c[listKey] = c[listKey].filter(t => t.id !== txnId);
+  save(); render(); openDetail(id);
+}
+
+/* ---------- export / import ---------- */
+function download(filename, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+function exportJSON() {
+  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify({ cases, adjustments }, null, 2), 'application/json');
+}
+
+function importJSON(ev) {
+  const file = ev.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      const newCases = Array.isArray(data) ? data : data?.cases;
+      if (!Array.isArray(newCases)) throw new Error('Invalid format');
+      cases = newCases;
+      adjustments = (Array.isArray(data) ? [] : data?.adjustments) || [];
+      save(); render();
+      notify(`Restored ${newCases.length} cases from backup.`);
+    } catch (e) { notify('Could not read that backup file.', true); }
+  };
+  reader.readAsText(file);
+  ev.target.value = '';
+}
+
+function exportCSV() {
+  const rows = [['Date','Company','PIC','Referral Name','Invoice Amount','Invoice Issued','Selling %','Cost %','Referral %',
+    'Expected from Customer','Received from Customer','Customer Status',
+    'Expected from Supplier','Received from Supplier','Supplier Status',
+    'Expected Payout to Client','Paid to Client','Payout Status',
+    'Referral Fee','Referral Paid','Profit %','Profit Amount','Case Status']];
+  for (const c of cases) {
+    const x = computed(c);
+    rows.push([c.date, c.company, c.pic, c.referralName || '', x.amount, c.invoiceIssued ? 'Yes' : 'No',
+      c.sellingPct, c.costPct, c.referralPct,
+      x.expectedCustomer.toFixed(2), x.recvCustomer.toFixed(2), x.sCustomer,
+      x.expectedSupplier.toFixed(2), x.recvSupplier.toFixed(2), x.sSupplier,
+      x.expectedPayout.toFixed(2), x.paidClient.toFixed(2), x.sPayout,
+      x.referralAmount.toFixed(2), x.referralDone ? 'Yes' : 'No',
+      x.profitPct.toFixed(2), x.profitAmount.toFixed(2), x.closed ? 'Closed' : 'Open']);
+  }
+  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+  download(`invoice-tracker-${today()}.csv`, csv, 'text/csv');
+}
+
+/* ---------- misc ---------- */
+function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
+document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.overlay').forEach(o => o.classList.remove('show')); });
+
+load();
+render();
+</script>
+</body>
+</html>
