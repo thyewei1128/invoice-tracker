@@ -69,10 +69,6 @@
   .card.feature .value.green { color: #9FD8B9; }
   .card.feature .value.red { color: #F4A9A9; }
   .card.feature div[style] { color: #8FA6B2 !important; }
-  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
-  .chart-card h3 { font-size: 14px; color: var(--accent); margin-bottom: 2px; }
-  .chart-card .chart-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
-  .chart-card svg { width: 100%; height: auto; display: block; }
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input[type=text], .toolbar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
@@ -183,8 +179,8 @@
   /* Finance & Profile are in-page views, not pop-ups */
   .page-section { display: none; }
   body.m-finance #financePage, body.m-profile #profilePage { display: block; }
-  body.m-finance .cards, body.m-finance .chart-card, body.m-finance .toolbar, body.m-finance #tableWrap, body.m-finance .period-bar,
-  body.m-profile .cards, body.m-profile .chart-card, body.m-profile .toolbar, body.m-profile #tableWrap, body.m-profile .period-bar { display: none; }
+  body.m-finance .cards, body.m-finance .toolbar, body.m-finance #tableWrap, body.m-finance .period-bar,
+  body.m-profile .cards, body.m-profile .toolbar, body.m-profile #tableWrap, body.m-profile .period-bar { display: none; }
   .page-section .card { padding: 18px; }
   .page-section h2 { font-size: 18px; color: var(--accent); margin-bottom: 14px; }
   .page-back { float: right; }
@@ -212,7 +208,7 @@
     .bn-fab-label { font-size: 10px; color: var(--tan); font-weight: 700; }
     /* tab views: Dashboard shows cards, Cases shows the list */
     body.m-home .toolbar, body.m-home .hint, body.m-home #tableWrap, body.m-home .footer-note { display: none; }
-    body.m-cases .cards, body.m-cases .chart-card { display: none; }
+    body.m-cases .cards { display: none; }
     h1 { font-size: 19px; }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .card { padding: 10px 12px; }
@@ -268,7 +264,6 @@
 <div id="storageWarn">⚠️ This window cannot save data permanently — your entries will disappear when you close it. Open the app in Safari or Chrome instead, or click <b>Backup</b> before closing to download your data.</div>
 
 <div class="cards" id="summaryCards"></div>
-<div class="chart-card" id="chartCard"></div>
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
@@ -342,7 +337,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.11.0 (12 Jun 2026)';
+const APP_VERSION = '1.12.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -522,98 +517,6 @@ function renderSummary(list, rangeOn) {
     <div class="card"><div class="label">Profit (Closed)${tag}</div><div class="value green">${fmt(realized)}</div></div>
     <div class="card"><div class="label">Profit (Pending)${tag}</div><div class="value">${fmt(pending)}</div></div>
     <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>`;
-
-  renderChart();
-}
-
-/* ---------- profit trend line chart (self-drawn SVG, follows the period filter) ---------- */
-const fmtShort = n => {
-  const a = Math.abs(n);
-  if (a >= 1000000) return (n / 1000000).toFixed(1).replace(/\.0$/, '') + 'M';
-  if (a >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k';
-  return String(Math.round(n));
-};
-
-function renderChart() {
-  const box = document.getElementById('chartCard');
-  const range = getRange();
-  const DAY = 86400000;
-  const dkey = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  const dlabel = d => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}`;
-
-  // chart window = the period selected at the top (ALL → last 6 months)
-  let toD = new Date();
-  if (range && range.to && range.to !== '9999-12-31') { const t = new Date(range.to + 'T00:00:00'); if (!isNaN(t)) toD = t; }
-  if (toD.getTime() > Date.now()) toD = new Date();
-  let fromD = null;
-  if (range && range.from && range.from !== '0000-01-01') { const f = new Date(range.from + 'T00:00:00'); if (!isNaN(f)) fromD = f; }
-  if (!fromD) fromD = new Date(toD.getFullYear(), toD.getMonth() - 5, 1);
-  if ((toD - fromD) / DAY < 6) fromD = new Date(toD.getTime() - 6 * DAY);   // at least a one-week window
-
-  const days = Math.round((toD - fromD) / DAY) + 1;
-  const mode = days <= 35 ? 'day' : days <= 200 ? 'week' : 'month';
-
-  const buckets = [];
-  if (mode === 'day') {
-    for (let t = fromD.getTime(); t <= toD.getTime(); t += DAY) {
-      const d = new Date(t);
-      buckets.push({ from: dkey(d), to: dkey(d), label: dlabel(d) });
-    }
-  } else if (mode === 'week') {
-    for (let t = fromD.getTime(); t <= toD.getTime(); t += 7 * DAY) {
-      const a = new Date(t), b = new Date(Math.min(t + 6 * DAY, toD.getTime()));
-      buckets.push({ from: dkey(a), to: dkey(b), label: dlabel(a) });
-    }
-  } else {
-    const cur = new Date(fromD.getFullYear(), fromD.getMonth(), 1);
-    while (cur <= toD) {
-      const mk = `${cur.getFullYear()}-${String(cur.getMonth() + 1).padStart(2, '0')}`;
-      buckets.push({ from: mk + '-01', to: mk + '-31', label: cur.toLocaleString('en', { month: 'short' }) });
-      cur.setMonth(cur.getMonth() + 1);
-    }
-  }
-
-  const closedAll = cases.filter(c => computed(c).closed);
-  const vals = buckets.map(b => closedAll.filter(c => (c.date || '') >= b.from && (c.date || '') <= b.to).reduce((a, c) => a + computed(c).profitAmount, 0));
-  const title = { day: 'Daily', week: 'Weekly', month: 'Monthly' }[mode];
-
-  if (vals.every(v => v <= 0)) {
-    box.innerHTML = `<h3>📈 Profit Trend</h3><div class="chart-sub">${title} · no closed-case profit in this period yet. The chart follows the period selected above.</div>`;
-    return;
-  }
-
-  const W = 600, H = 232, padL = 56, padR = 16, padT = 22, baseY = 188;
-  const n = vals.length;
-  const max = Math.max(...vals);
-  const X = i => n === 1 ? padL + (W - padL - padR) / 2 : padL + i * (W - padL - padR) / (n - 1);
-  const Y = v => baseY - (max > 0 ? v / max * (baseY - padT) : 0);
-  const pts = vals.map((v, i) => `${X(i).toFixed(1)},${Y(v).toFixed(1)}`);
-  const area = `M ${X(0).toFixed(1)},${baseY} L ${pts.join(' L ')} L ${X(n - 1).toFixed(1)},${baseY} Z`;
-
-  const dots = n <= 35 ? vals.map((v, i) => `<circle cx="${X(i).toFixed(1)}" cy="${Y(v).toFixed(1)}" r="${n <= 14 ? 4 : 3}" fill="#1F4D63"/>`).join('') : '';
-  const maxIdx = vals.indexOf(max);
-  const valueLabels = n <= 8
-    ? vals.map((v, i) => v > 0 ? `<text x="${X(i).toFixed(1)}" y="${(Y(v) - 10).toFixed(1)}" text-anchor="middle" font-size="14" font-weight="700" fill="#143947">${fmtShort(v)}</text>` : '').join('')
-    : `<text x="${X(maxIdx).toFixed(1)}" y="${(Y(max) - 10).toFixed(1)}" text-anchor="middle" font-size="14" font-weight="700" fill="#143947">${fmtShort(max)}</text>`;
-  const labelEvery = Math.max(1, Math.ceil(n / 6));
-  const xLabels = buckets.map((b, i) => (i % labelEvery === 0 || i === n - 1) ? `<text x="${X(i).toFixed(1)}" y="${baseY + 22}" text-anchor="middle" font-size="13" fill="#6B7884">${b.label}</text>` : '').join('');
-  const gridY = [0.5, 1].map(f => {
-    const v = max * f, y = Y(v).toFixed(1);
-    return `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="#E4DDD0" stroke-dasharray="4 4"/><text x="${padL - 7}" y="${Number(y) + 4}" text-anchor="end" font-size="12" fill="#6B7884">${fmtShort(v)}</text>`;
-  }).join('');
-
-  box.innerHTML = `
-    <h3>📈 Profit Trend</h3>
-    <div class="chart-sub">${title} · profit from closed cases · follows the period selected above · RM</div>
-    <svg viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Profit trend line chart">
-      ${gridY}
-      <line x1="${padL}" y1="${baseY}" x2="${W - padR}" y2="${baseY}" stroke="#E4DDD0" stroke-width="2"/>
-      <path d="${area}" fill="rgba(31,77,99,0.10)"/>
-      <polyline points="${pts.join(' ')}" fill="none" stroke="#1F4D63" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
-      ${dots}
-      ${valueLabels}
-      ${xLabels}
-    </svg>`;
 }
 
 /* ---------- table totals ---------- */
