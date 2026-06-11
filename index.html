@@ -337,7 +337,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.12.0 (12 Jun 2026)';
+const APP_VERSION = '1.12.1 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -426,7 +426,7 @@ function setRange(v) {
 
 /* ---------- table sorting & paging ---------- */
 let sortKey = 'date', sortDir = -1;   // newest first by default
-let page = 1, perPage = 10;
+let page = 1, perPage = 5;
 
 function setSort(k) {
   if (sortKey === k) sortDir = -sortDir;
@@ -655,6 +655,7 @@ function render() {
     <span>Page ${page} of ${pages}</span>
     <button class="btn-secondary btn-small" ${page >= pages ? 'disabled' : ''} onclick="gotoPage(${page + 1})">Next ›</button>
     <select onchange="setPerPage(this.value)">
+      <option value="5" ${perPage === 5 ? 'selected' : ''}>5 per page</option>
       <option value="10" ${perPage === 10 ? 'selected' : ''}>10 per page</option>
       <option value="20" ${perPage === 20 ? 'selected' : ''}>20 per page</option>
       <option value="50" ${perPage === 50 ? 'selected' : ''}>50 per page</option>
