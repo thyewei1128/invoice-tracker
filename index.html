@@ -44,9 +44,12 @@
   h1 { font-size: 24px; margin-bottom: 4px; color: var(--accent); font-weight: 800; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
 
-  .period-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
-  .period-label { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tan-3); margin-right: 4px; }
-  .chip { background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer; }
+  .period-bar { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow-x: auto; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; margin-bottom: 14px; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .period-bar::-webkit-scrollbar { display: none; }
+  .chip { flex: none; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer; }
+  #customRange { flex: none; }
+  .info-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 800; border: none; padding: 0; vertical-align: middle; margin-left: 6px; flex: none; cursor: pointer; }
+  .info-btn:hover { background: var(--accent-2); }
   .chip:hover { background: var(--tan-2); }
   .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   #customRange input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
@@ -211,11 +214,10 @@
 <body class="m-home">
 
 <div class="eyebrow">DLS Technology · Internal System</div>
-<h1>Invoice Tracker</h1>
-<div class="sub">Track each case from invoice issued → customer payment → supplier cash → client payout. Partial payments supported.</div>
+<h1 style="margin-bottom:12px">Invoice Tracker <button class="info-btn" onclick="showInfo('app')">!</button></h1>
 
 <div class="period-bar">
-  <span class="period-label">📅 Report Period</span>
+  <button class="chip" data-r="today" onclick="setRange('today')">Today</button>
   <button class="chip" data-r="7d" onclick="setRange('7d')">7 Days</button>
   <button class="chip" data-r="1m" onclick="setRange('1m')">1 Month</button>
   <button class="chip" data-r="6m" onclick="setRange('6m')">6 Months</button>
@@ -234,6 +236,7 @@
 <div class="chart-card" id="chartCard"></div>
 
 <div class="toolbar">
+  <button class="info-btn" onclick="showInfo('cases')" title="How to use">!</button>
   <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
   <select id="filterPic" onchange="onFilterChange()"><option value="">All Agents</option></select>
   <select id="filterStatus" onchange="onFilterChange()">
@@ -251,10 +254,7 @@
   <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
 </div>
 
-<div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — tick <b>Invoice Issued</b> and key in payments there (partial amounts are fine), then click <b>💾 Save</b> to keep the changes (Cancel discards them). Closed cases are locked 🔒 — unlocking them needs your edit password. Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case.</div>
-
 <div id="tableWrap"></div>
-<div class="footer-note">Data is saved automatically in this browser. Turn on <b>☁️ Sync</b> to share data across your devices, and use <b>Backup</b> regularly to keep a safety copy as a file.</div>
 
 <!-- Add/Edit case modal -->
 <div class="overlay" id="formOverlay">
@@ -307,6 +307,11 @@
 <!-- Profile modal -->
 <div class="overlay" id="profileOverlay">
   <div class="modal" id="profileModal"></div>
+</div>
+
+<!-- Info modal -->
+<div class="overlay" id="infoOverlay">
+  <div class="modal" id="infoModal" style="max-width:520px"></div>
 </div>
 
 <div class="toast-wrap" id="toasts"></div>
@@ -384,6 +389,7 @@ const TOL = 0.005;
 let rangeMode = 'all';
 function getRange() {
   if (rangeMode === 'all') return null;
+  if (rangeMode === 'today') return { from: today(), to: today() };
   if (rangeMode === 'custom') {
     const from = document.getElementById('rangeFrom').value;
     const to = document.getElementById('rangeTo').value;
@@ -946,8 +952,7 @@ function openCash() {
     <button class="modal-x" onclick="closeOverlay('cashOverlay')">✕</button>
     <div class="detail-head">
       <div>
-        <h2 style="margin-bottom:0">Cash Book</h2>
-        <div class="meta">Cash in from suppliers, cash out to clients &amp; referrals, and your own money in/out. Customer invoice payments (bank) are not counted here.</div>
+        <h2 style="margin-bottom:0">Cash Book <button class="info-btn" onclick="showInfo('cash')">!</button></h2>
       </div>
       <span class="badge ${cash < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Cash on Hand: ${fmt(cash)}</span>
     </div>
@@ -1039,8 +1044,7 @@ function openProfit() {
     <button class="modal-x" onclick="closeOverlay('profitOverlay')">✕</button>
     <div class="detail-head">
       <div>
-        <h2 style="margin-bottom:0">Profit &amp; Partners 🤝</h2>
-        <div class="meta">Profit from closed cases, split equally between 3 partners. Withdrawals are also recorded as cash out in the Cash Book.</div>
+        <h2 style="margin-bottom:0">Profit &amp; Partners 🤝 <button class="info-btn" onclick="showInfo('profit')">!</button></h2>
       </div>
       <span class="badge ${balance < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Balance Profit: ${fmt(balance)}</span>
     </div>
@@ -1341,6 +1345,23 @@ function openSync() {
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && syncCfg.gistId && Date.now() - lastPullAt > 30000) cloudPull();
 });
+
+/* ---------- info pop-ups ---------- */
+const INFO = {
+  app: { t: 'About this system', b: 'Track each case through 4 steps: <b>1)</b> you issue the invoice → <b>2)</b> customer pays you → <b>3)</b> supplier passes you cash → <b>4)</b> you pay cash to your client.<br><br>Partial payments are supported at every step. A case closes automatically once the invoice is issued, all three payments are complete, and the referral (if any) is paid.<br><br>Use the period buttons (Today / 7 Days / 1 Month…) to filter the dashboard and case list by date.' },
+  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. Data saves in this browser — turn on ☁️ Sync to share across devices, and Backup regularly for a safety copy.' },
+  cash: { t: 'Cash Book', b: 'Shows every cash movement with a running balance: cash IN from suppliers, cash OUT to clients, referral fees, profit withdrawals, and your own money in/out.<br><br>Customer invoice payments are bank transfers, so they are <b>not</b> counted in cash on hand.<br><br>If the balance is negative, that is your own money currently fronted.' },
+  profit: { t: 'Profit & Partners', b: 'Total profit comes from <b>closed cases only</b> — a case must be fully collected and paid out before its profit enters the pool.<br><br>Profit splits equally between the 3 partners. Record each withdrawal here; it automatically appears as cash out in the Cash Book.<br><br>Balance Profit = total profit − total withdrawn.' },
+};
+function showInfo(key) {
+  const i = INFO[key];
+  document.getElementById('infoModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('infoOverlay')">✕</button>
+    <h2>💡 ${i.t}</h2>
+    <div style="font-size:14px;line-height:1.7">${i.b}</div>
+    <div class="modal-actions"><button class="btn-primary" onclick="closeOverlay('infoOverlay')">Got it</button></div>`;
+  document.getElementById('infoOverlay').classList.add('show');
+}
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
