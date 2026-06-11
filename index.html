@@ -45,6 +45,8 @@
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
   .header-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
   .header-row h1 { margin-bottom: 0; }
+  .brand { display: flex; align-items: center; gap: 10px; cursor: pointer; min-width: 0; }
+  .brand-logo { width: 42px; height: 42px; border-radius: 11px; flex: none; display: block; }
   #syncBtn { padding: 6px 11px; font-size: 12px; border-radius: 999px; flex: none; white-space: nowrap; }
 
   .period-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; margin-bottom: 14px; }
@@ -210,6 +212,7 @@
     body.m-home .toolbar, body.m-home .hint, body.m-home #tableWrap, body.m-home .footer-note { display: none; }
     body.m-cases .cards { display: none; }
     h1 { font-size: 19px; }
+    .brand-logo { width: 36px; height: 36px; border-radius: 9px; }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .card { padding: 10px 12px; }
     .card .value { font-size: 16px; }
@@ -240,9 +243,12 @@
 <body class="m-home">
 
 <div class="header-row">
-  <div>
-    <div class="eyebrow">DLS Technology · Internal System</div>
-    <h1>Invoice Tracker</h1>
+  <div class="brand" onclick="mobileGo('home')" title="Back to Dashboard">
+    <img src="icon-192.png" alt="logo" class="brand-logo">
+    <div>
+      <div class="eyebrow">DLS Technology · Internal System</div>
+      <h1>Invoice Tracker</h1>
+    </div>
   </div>
   <button class="btn-secondary" id="syncBtn" onclick="syncNowOrSetup()">☁️ Sync: Off</button>
 </div>
@@ -337,7 +343,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.12.1 (12 Jun 2026)';
+const APP_VERSION = '1.12.2 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
