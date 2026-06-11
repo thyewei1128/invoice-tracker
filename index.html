@@ -299,6 +299,16 @@
   <div class="modal" id="profitModal"></div>
 </div>
 
+<!-- Finance chooser modal -->
+<div class="overlay" id="financeOverlay">
+  <div class="modal" id="financeModal"></div>
+</div>
+
+<!-- Profile modal -->
+<div class="overlay" id="profileOverlay">
+  <div class="modal" id="profileModal"></div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 <div id="ptr">⟳ Release to refresh</div>
 
@@ -310,8 +320,8 @@
     <button class="bn-fab" onclick="openCaseForm()">＋</button>
     <span class="bn-fab-label">NEW CASE</span>
   </div>
-  <button class="bn-item" onclick="openCash()"><span class="bn-ico">🪙</span><span>Cash</span></button>
-  <button class="bn-item" onclick="openProfit()"><span class="bn-ico">🤝</span><span>Profit</span></button>
+  <button class="bn-item" onclick="openFinance()"><span class="bn-ico">💼</span><span>Finance</span></button>
+  <button class="bn-item" onclick="openProfile()"><span class="bn-ico">👤</span><span>Profile</span></button>
 </nav>
 
 <script>
@@ -1343,6 +1353,77 @@ document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
 });
+
+/* ---------- finance & profile tabs ---------- */
+function openFinance() {
+  closeAllOverlays();
+  const cash = cashOnHand();
+  const balance = realizedProfitAll() - withdrawnAll();
+  document.getElementById('financeModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('financeOverlay')">✕</button>
+    <h2>💼 Finance</h2>
+    <div class="figures">
+      <div class="fig"><div class="label">Cash on Hand</div><div class="value" style="color:${cash < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(cash)}</div></div>
+      <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
+    </div>
+    <div style="display:grid; gap:10px">
+      <button class="btn-primary" style="justify-content:flex-start" onclick="openCash()">🪙 Cash Book — every cash in &amp; out</button>
+      <button class="btn-primary" style="justify-content:flex-start" onclick="openProfit()">🤝 Profit &amp; Partners — split &amp; withdrawals</button>
+    </div>`;
+  document.getElementById('financeOverlay').classList.add('show');
+}
+
+function openProfile() {
+  closeAllOverlays();
+  const connected = !!(syncCfg.token && syncCfg.gistId);
+  document.getElementById('profileModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('profileOverlay')">✕</button>
+    <h2>👤 Profile</h2>
+
+    <div class="leg" style="margin-bottom:12px">
+      <h3>☁️ Sync</h3>
+      <div style="font-size:13px;color:var(--muted);margin:6px 0 10px">${connected ? 'ON — this device shares data with your other devices.' : 'OFF — data stays on this device only.'}</div>
+      <button class="btn-secondary btn-small" onclick="openSync()">Sync Settings</button>
+    </div>
+
+    <div class="leg" style="margin-bottom:12px">
+      <h3>🔒 Edit Password <span style="font-weight:400;color:var(--muted);font-size:12px">(protects closed cases)</span></h3>
+      <div class="txn-form" style="margin-top:8px">
+        ${settings.editPassHash ? '<input type="password" id="pp_cur" class="amt" placeholder="Current password" autocomplete="off">' : ''}
+        <input type="password" id="pp_new" class="amt" placeholder="New password (min 4)" autocomplete="off">
+        <button class="btn-primary btn-small" onclick="changeEditPass()">${settings.editPassHash ? 'Change' : 'Set'} Password</button>
+      </div>
+    </div>
+
+    <div class="leg" style="margin-bottom:12px">
+      <h3>💾 Data</h3>
+      <div class="txn-form" style="margin-top:8px">
+        <button class="btn-secondary btn-small" onclick="exportJSON()">Backup</button>
+        <button class="btn-secondary btn-small" onclick="document.getElementById('importFile').click()">Restore</button>
+        <button class="btn-secondary btn-small" onclick="exportCSV()">Export CSV</button>
+      </div>
+    </div>
+
+    <div class="leg" style="background:var(--accent-soft)">
+      <h3>🔐 Login &amp; Access Control</h3>
+      <div style="font-size:13px;color:var(--muted);margin-top:6px">Coming soon — user accounts with company access control, managed from the admin panel.</div>
+    </div>`;
+  document.getElementById('profileOverlay').classList.add('show');
+}
+
+async function changeEditPass() {
+  const nw = document.getElementById('pp_new').value;
+  if (settings.editPassHash) {
+    const cur = document.getElementById('pp_cur').value;
+    if (await hashText(cur) !== settings.editPassHash) { notify('Current password is wrong.', true); return; }
+  }
+  if (nw.length < 4) { notify('New password must be at least 4 characters.', true); return; }
+  settings.editPassHash = await hashText(nw);
+  editUnlocked = false;
+  save();
+  notify('Edit password updated ✓');
+  openProfile();
+}
 
 /* ---------- mobile tab navigation ---------- */
 function mobileGo(v) {
