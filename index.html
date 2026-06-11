@@ -106,8 +106,12 @@
   /* Modal */
   .overlay { position: fixed; inset: 0; background: rgba(20,22,28,0.45); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 50; }
   .overlay.show { display: flex; }
-  .modal { background: var(--card); border-radius: 14px; width: 100%; max-width: 860px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); }
-  .modal h2 { font-size: 18px; margin-bottom: 16px; }
+  .modal { background: var(--card); border-radius: 14px; width: 100%; max-width: 860px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); position: relative; }
+  .modal h2 { font-size: 18px; margin-bottom: 16px; padding-right: 36px; }
+  .modal-x { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 16px; font-weight: 700; border: none; display: flex; align-items: center; justify-content: center; z-index: 2; }
+  .modal-x:hover { background: var(--tan-2); }
+
+  #ptr { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 70; text-align: center; padding: 12px; font-size: 13px; font-weight: 700; color: #fff; background: var(--accent); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 
   .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
@@ -183,8 +187,9 @@
     .card { padding: 10px 12px; }
     .card .value { font-size: 16px; }
     .toolbar input[type=text] { width: 100%; }
-    .overlay { padding: 12px 6px; }
-    .modal { padding: 16px 14px; }
+    /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
+    .overlay { padding: 22px 12px 110px; }
+    .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
     /* 16px inputs stop iPhone auto-zooming when typing */
     input, select, .txn-form input { font-size: 16px; }
     .txn-form input.amt { width: 120px; }
@@ -243,6 +248,7 @@
 <!-- Add/Edit case modal -->
 <div class="overlay" id="formOverlay">
   <div class="modal">
+    <button class="modal-x" onclick="closeOverlay('formOverlay')">✕</button>
     <h2 id="formTitle">New Case</h2>
     <div class="form-grid">
       <div class="field"><label>Date</label><input type="date" id="f_date"></div>
@@ -283,6 +289,7 @@
 </div>
 
 <div class="toast-wrap" id="toasts"></div>
+<div id="ptr">⟳ Release to refresh</div>
 
 <!-- Bottom app navigation (mobile) -->
 <nav class="bottomnav">
@@ -604,6 +611,7 @@ function agentChanged() {
 function openCaseForm(id) {
   const c = id ? cases.find(c => c.id === id) : null;
   if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  closeAllOverlays();
   editingId = id || null;
   document.getElementById('agentList').innerHTML = agentNames().map(p => `<option value="${esc(p)}"></option>`).join('');
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
@@ -720,6 +728,7 @@ async function hashText(t) {
 function openDetail(id) {
   const c0 = cases.find(c => c.id === id);
   if (!c0) return;
+  closeAllOverlays();
   detailId = id;
   detailDraft = JSON.parse(JSON.stringify(c0));
   detailDirty = false;
@@ -759,6 +768,7 @@ function renderDetail() {
     </div>`;
 
   document.getElementById('detailModal').innerHTML = `
+    <button class="modal-x" onclick="closeDetail()">✕</button>
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
@@ -849,6 +859,7 @@ function toggleInvoice(id) {
 
 /* ---------- cash book ---------- */
 function openCash() {
+  closeAllOverlays();
   const moves = cashMovements();
   let running = 0;
   const rows = moves.map(m => {
@@ -864,6 +875,7 @@ function openCash() {
 
   const cash = cashOnHand();
   document.getElementById('cashModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('cashOverlay')">✕</button>
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">Cash Book</h2>
@@ -930,6 +942,7 @@ function exportCashCSV() {
 
 /* ---------- profit & partners ---------- */
 function openProfit() {
+  closeAllOverlays();
   const range = getRange();
   const realized = realizedProfitAll();
   const withdrawn = withdrawnAll();
@@ -955,6 +968,7 @@ function openProfit() {
   </tr>`).join('');
 
   document.getElementById('profitModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('profitOverlay')">✕</button>
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">Profit &amp; Partners 🤝</h2>
@@ -1220,8 +1234,9 @@ function disconnectSync() {
 }
 
 function openSync() {
+  closeAllOverlays();
   const connected = !!(syncCfg.token && syncCfg.gistId);
-  document.getElementById('syncModal').innerHTML = connected ? `
+  document.getElementById('syncModal').innerHTML = (connected ? `
     <h2>☁️ Sync is ON</h2>
     <div style="font-size:14px;line-height:1.6">
       <p>This device shares data with every other device connected with the same sync key.
@@ -1250,7 +1265,7 @@ function openSync() {
     </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeOverlay('syncOverlay')">Cancel</button>
-    </div>`;
+    </div>`) + `<button class="modal-x" onclick="closeOverlay('syncOverlay')">✕</button>`;
   document.getElementById('syncOverlay').classList.add('show');
 }
 
@@ -1261,6 +1276,9 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
+function closeAllOverlays() {
+  document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
+}
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => {
   if (e.target === o) { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
 }));
@@ -1270,12 +1288,30 @@ document.addEventListener('keydown', e => {
 
 /* ---------- mobile tab navigation ---------- */
 function mobileGo(v) {
+  closeAllOverlays();
   document.body.classList.toggle('m-home', v === 'home');
   document.body.classList.toggle('m-cases', v === 'cases');
   document.getElementById('bn-home').classList.toggle('active', v === 'home');
   document.getElementById('bn-cases').classList.toggle('active', v === 'cases');
   window.scrollTo({ top: 0 });
 }
+
+/* ---------- pull down to refresh (for the home-screen app) ---------- */
+let ptrStartY = null, ptrReady = false;
+document.addEventListener('touchstart', e => {
+  ptrReady = false;
+  ptrStartY = (window.scrollY === 0 && !document.querySelector('.overlay.show')) ? e.touches[0].clientY : null;
+}, { passive: true });
+document.addEventListener('touchmove', e => {
+  if (ptrStartY === null) return;
+  const pulled = e.touches[0].clientY - ptrStartY;
+  if (pulled > 80 && !ptrReady) { ptrReady = true; document.getElementById('ptr').style.display = 'block'; }
+  if (pulled <= 80 && ptrReady) { ptrReady = false; document.getElementById('ptr').style.display = 'none'; }
+}, { passive: true });
+document.addEventListener('touchend', () => {
+  if (ptrReady) { document.getElementById('ptr').textContent = '⟳ Refreshing…'; location.reload(); }
+  ptrStartY = null; ptrReady = false;
+});
 
 load();
 render();
