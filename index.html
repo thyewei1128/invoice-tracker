@@ -180,7 +180,7 @@
   <button class="btn-primary" onclick="openCaseForm()">+ New Case</button>
 </div>
 
-<div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — there you tick <b>Invoice Issued</b> and key in every payment received from the customer, cash from the supplier, and cash paid to the client (partial amounts are fine). Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case. You can also click the Yes/No under Invoice to flip it directly.</div>
+<div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — tick <b>Invoice Issued</b> and key in payments there (partial amounts are fine), then click <b>💾 Save</b> to keep the changes (Cancel discards them). Closed cases are locked 🔒 — unlocking them needs your edit password. Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case.</div>
 
 <div id="tableWrap"></div>
 <div class="footer-note">Data is saved automatically in this browser. Turn on <b>☁️ Sync</b> to share data across your devices, and use <b>Backup</b> regularly to keep a safety copy as a file.</div>
@@ -236,6 +236,7 @@ let cases = [];
 let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
 let withdrawals = [];   // profit taken by partners: {id, date, partner, amount, note}
 let partners = ['Partner 1', 'Partner 2', 'Partner 3'];   // equal 3-way split
+let settings = {};      // app settings, e.g. editPassHash for unlocking closed cases
 let updatedAt = 0;      // last local edit time, used to decide which copy is newer
 let editingId = null;
 
@@ -248,6 +249,7 @@ function load() {
       cases = data?.cases || []; adjustments = data?.adjustments || []; updatedAt = data?.updatedAt || 0;
       withdrawals = data?.withdrawals || [];
       if (Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
+      settings = data?.settings || {};
     }
   }
   catch (e) { cases = []; adjustments = []; }
@@ -255,7 +257,7 @@ function load() {
   try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
 }
-const fullData = () => ({ cases, adjustments, withdrawals, partners, updatedAt });
+const fullData = () => ({ cases, adjustments, withdrawals, partners, settings, updatedAt });
 function persist() {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fullData())); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
@@ -455,8 +457,9 @@ function render() {
 
 /* ---------- add / edit case ---------- */
 function openCaseForm(id) {
-  editingId = id || null;
   const c = id ? cases.find(c => c.id === id) : null;
+  if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  editingId = id || null;
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
   document.getElementById('f_date').value = c ? c.date : today();
   document.getElementById('f_company').value = c ? c.company : '';
@@ -513,6 +516,8 @@ function saveCaseForm() {
 
 let pendingDelete = null;
 function deleteCase(id) {
+  const c0 = cases.find(c => c.id === id);
+  if (c0 && computed(c0).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   if (pendingDelete !== id) {
     pendingDelete = id;
     render();
@@ -526,10 +531,38 @@ function deleteCase(id) {
   notify('Case deleted.');
 }
 
-/* ---------- detail / payments ---------- */
+/* ---------- detail / payments (draft — changes apply only when Save is clicked) ---------- */
+let detailId = null, detailDraft = null, detailDirty = false;
+let editUnlocked = false;   // true after correct password, until the page is reloaded
+
+async function hashText(t) {
+  const s = 'inv-salt-' + t;
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (e) {
+    let h = 5381;
+    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+    return 'x' + h.toString(16);
+  }
+}
+
 function openDetail(id) {
-  const c = cases.find(c => c.id === id);
+  const c0 = cases.find(c => c.id === id);
+  if (!c0) return;
+  detailId = id;
+  detailDraft = JSON.parse(JSON.stringify(c0));
+  detailDirty = false;
+  renderDetail();
+  document.getElementById('detailOverlay').classList.add('show');
+}
+
+function renderDetail() {
+  const c = detailDraft;
   if (!c) return;
+  const saved = cases.find(s => s.id === detailId);
+  const locked = !!saved && computed(saved).closed && !editUnlocked;
+  const hasPass = !!settings.editPassHash;
   const x = computed(c);
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
@@ -540,19 +573,19 @@ function openDetail(id) {
         <span class="badge ${status}">${{ full: 'Full', partial: 'Partial', none: 'Not yet' }[status]}</span>
       </div>
       <div class="target">${listKey === 'clientPayouts' ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
-      ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>
+      ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th>${locked ? '' : '<th></th>'}</tr></thead><tbody>
         ${txns.map(t => `<tr>
           <td>${esc(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
-          <td><button class="btn-danger btn-small" onclick="deleteTxn('${c.id}','${listKey}','${t.id}')">×</button></td>
+          ${locked ? '' : `<td><button class="btn-danger btn-small" onclick="deleteTxn('${listKey}','${t.id}')">×</button></td>`}
         </tr>`).join('')}
       </tbody></table>` : ''}
-      <div class="txn-form">
+      ${locked ? '' : `<div class="txn-form">
         <input type="date" id="d_${listKey}_date" value="${today()}">
         <input type="number" class="amt" id="d_${listKey}_amount" placeholder="Amount (RM)" step="0.01" min="0">
         <input type="text" class="note" id="d_${listKey}_note" placeholder="Note (optional)">
-        <button class="btn-primary btn-small" onclick="addTxn('${c.id}','${listKey}')">Add Payment</button>
-        ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${c.id}','${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
-      </div>
+        <button class="btn-primary btn-small" onclick="addTxn('${listKey}')">Add Payment</button>
+        ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
+      </div>`}
     </div>`;
 
   document.getElementById('detailModal').innerHTML = `
@@ -571,9 +604,16 @@ function openDetail(id) {
       <div class="fig"><div class="label">Profit</div><div class="value" style="color:var(--green)">${fmt(x.profitAmount)} (${pct(x.profitPct)})</div></div>
     </div>
 
+    ${locked ? `<div style="background:var(--amber-soft);color:var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🔒 This case is CLOSED and locked — view only.
+      <div class="txn-form" style="margin-top:8px">
+        <input type="password" class="note" id="det_pass" placeholder="${hasPass ? 'Enter edit password to unlock' : 'Create an edit password (min 4 characters)'}" autocomplete="off">
+        <button class="btn-primary btn-small" onclick="unlockDetail()">${hasPass ? 'Unlock' : 'Set Password & Unlock'}</button>
+      </div>
+    </div>` : ''}
+
     <div class="toggles">
-      <label><input type="checkbox" ${c.invoiceIssued ? 'checked' : ''} onchange="toggleFlag('${c.id}','invoiceIssued',this.checked)"> Invoice Issued</label>
-      ${x.referralAmount > TOL ? `<label><input type="checkbox" ${c.referralPaid ? 'checked' : ''} onchange="toggleFlag('${c.id}','referralPaid',this.checked)"> Referral Paid (${fmt(x.referralAmount)})</label>` : ''}
+      <label><input type="checkbox" ${c.invoiceIssued ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="draftToggle('invoiceIssued',this.checked)"> Invoice Issued</label>
+      ${x.referralAmount > TOL ? `<label><input type="checkbox" ${c.referralPaid ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="draftToggle('referralPaid',this.checked)"> Referral Paid (${fmt(x.referralAmount)})</label>` : ''}
     </div>
 
     <div class="legs">
@@ -583,22 +623,58 @@ function openDetail(id) {
     </div>
 
     <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeOverlay('detailOverlay')">Close</button>
+      ${locked ? `<button class="btn-secondary" onclick="closeDetail()">Close</button>`
+        : `<span style="align-self:center;font-size:12px;color:var(--muted)">Changes apply only when you click Save</span>
+           <button class="btn-secondary" onclick="closeDetail()">Cancel</button>
+           <button class="btn-primary" onclick="saveDetail()">💾 Save${detailDirty ? ' Changes' : ''}</button>`}
     </div>`;
-  document.getElementById('detailOverlay').classList.add('show');
+}
+
+function saveDetail() {
+  const idx = cases.findIndex(s => s.id === detailId);
+  if (idx >= 0) cases[idx] = detailDraft;
+  detailId = null; detailDraft = null; detailDirty = false;
+  save(); render();
+  closeOverlay('detailOverlay');
+  notify('Case saved ✓');
+}
+
+function closeDetail() {
+  if (detailDirty) notify('Changes were NOT saved.', true);
+  detailId = null; detailDraft = null; detailDirty = false;
+  closeOverlay('detailOverlay');
+}
+
+async function unlockDetail() {
+  const v = document.getElementById('det_pass').value;
+  if (!settings.editPassHash) {
+    if (v.length < 4) { notify('Password must be at least 4 characters.', true); return; }
+    settings.editPassHash = await hashText(v);
+    editUnlocked = true;
+    save();
+    notify('Password set ✓ Remember it — you need it to edit closed cases.');
+    renderDetail();
+  } else if (await hashText(v) === settings.editPassHash) {
+    editUnlocked = true;
+    notify('Unlocked ✓ Closed cases stay editable until you reload the page.');
+    renderDetail();
+  } else {
+    notify('Wrong password.', true);
+  }
+}
+
+function draftToggle(key, val) {
+  detailDraft[key] = val;
+  if (key === 'referralPaid') detailDraft.referralPaidDate = val ? today() : undefined;
+  detailDirty = true;
+  renderDetail();
 }
 
 function toggleInvoice(id) {
   const c = cases.find(c => c.id === id);
+  if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   c.invoiceIssued = !c.invoiceIssued;
   save(); render();
-}
-
-function toggleFlag(id, key, val) {
-  const c = cases.find(c => c.id === id);
-  c[key] = val;
-  if (key === 'referralPaid') c.referralPaidDate = val ? today() : undefined;
-  save(); render(); openDetail(id);
 }
 
 /* ---------- cash book ---------- */
@@ -786,20 +862,20 @@ function savePartners() {
   notify('Partner names saved.');
 }
 
-function addTxn(id, listKey, presetAmount) {
-  const c = cases.find(c => c.id === id);
+function addTxn(listKey, presetAmount) {
   const amount = presetAmount !== undefined ? presetAmount : Number(document.getElementById(`d_${listKey}_amount`).value);
   if (!amount || amount <= 0) { notify('Please enter a payment amount.', true); return; }
   const date = document.getElementById(`d_${listKey}_date`).value || today();
   const note = document.getElementById(`d_${listKey}_note`).value.trim();
-  c[listKey].push({ id: uid(), date, amount, note });
-  save(); render(); openDetail(id);
+  (detailDraft[listKey] = detailDraft[listKey] || []).push({ id: uid(), date, amount, note });
+  detailDirty = true;
+  renderDetail();
 }
 
-function deleteTxn(id, listKey, txnId) {
-  const c = cases.find(c => c.id === id);
-  c[listKey] = c[listKey].filter(t => t.id !== txnId);
-  save(); render(); openDetail(id);
+function deleteTxn(listKey, txnId) {
+  detailDraft[listKey] = (detailDraft[listKey] || []).filter(t => t.id !== txnId);
+  detailDirty = true;
+  renderDetail();
 }
 
 /* ---------- export / import ---------- */
@@ -828,6 +904,7 @@ function importJSON(ev) {
       adjustments = (Array.isArray(data) ? [] : data?.adjustments) || [];
       withdrawals = (Array.isArray(data) ? [] : data?.withdrawals) || [];
       if (!Array.isArray(data) && Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
+      if (!Array.isArray(data) && data?.settings) settings = data.settings;
       save(); render();
       notify(`Restored ${newCases.length} cases from backup.`);
     } catch (e) { notify('Could not read that backup file.', true); }
@@ -917,6 +994,7 @@ async function cloudPull(showMsg) {
         adjustments = data.adjustments || [];
         withdrawals = data.withdrawals || [];
         if (Array.isArray(data.partners) && data.partners.length === 3) partners = data.partners;
+        settings = data.settings || settings;
         updatedAt = data.updatedAt || 0;
         persist(); render();
         if (showMsg) notify('Loaded newer data from cloud.');
@@ -1013,8 +1091,12 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
-document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
-document.addEventListener('keydown', e => { if (e.key === 'Escape') document.querySelectorAll('.overlay').forEach(o => o.classList.remove('show')); });
+document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => {
+  if (e.target === o) { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
+}));
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
+});
 
 load();
 render();
