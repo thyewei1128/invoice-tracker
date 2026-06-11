@@ -341,7 +341,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.10.1 (12 Jun 2026)';
+const APP_VERSION = '1.10.2 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -390,6 +390,7 @@ function notify(msg, isError) {
 
 /* ---------- helpers ---------- */
 const fmt = n => 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtN = n => (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });   // no RM prefix, for tight tables
 const pct = n => (Number(n) || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 }) + '%';
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = s => { if (!s) return ''; const [y, m, d] = String(s).split('-'); return (y && m && d) ? `${d}/${m}/${y}` : esc(s); };
@@ -983,8 +984,8 @@ function cashBookHTML() {
     return `<tr>
       <td>${fmtDate(m.date)}</td>
       <td>${esc(m.label)}${m.note ? `<div style="font-size:11px;color:var(--muted)">${esc(m.note)}</div>` : ''}</td>
-      <td class="num" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'} ${fmt(Math.abs(m.amount))}</td>
-      <td class="num"><b>${fmt(running)}</b></td>
+      <td class="num" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'}${fmtN(Math.abs(m.amount))}</td>
+      <td class="num"><b>${fmtN(running)}</b></td>
       <td>${m.adjId ? `<button class="btn-danger btn-small" onclick="deleteAdjustment('${m.adjId}')">×</button>` : ''}</td>
     </tr>`;
   }).join('');
@@ -1008,7 +1009,7 @@ function cashBookHTML() {
     </div>
 
     <div class="leg" style="margin-top:14px">
-      <h3 style="margin-bottom:8px">All cash movements (running balance) <button class="info-btn" onclick="showInfo('cash')">!</button></h3>
+      <h3 style="margin-bottom:8px">All cash movements · amounts in RM <button class="info-btn" onclick="showInfo('cash')">!</button></h3>
       ${moves.length ? `<table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No cash movements yet. They appear automatically when you record supplier payments and client payouts in each case.</div>'}
     </div>
 
@@ -1061,14 +1062,14 @@ function profitHTML() {
     const bal = share - taken;
     return `<tr>
       <td><input type="text" id="p_name_${i}" value="${esc(p)}" style="border:1px solid var(--border);border-radius:6px;padding:5px 8px;width:110px;max-width:26vw;min-width:64px"></td>
-      <td class="num">${fmt(share)}</td>
-      <td class="num">${fmt(taken)}</td>
-      <td class="num" style="color:${bal < -TOL ? 'var(--red)' : 'var(--green)'}"><b>${fmt(bal)}</b></td>
+      <td class="num">${fmtN(share)}</td>
+      <td class="num">${fmtN(taken)}</td>
+      <td class="num" style="color:${bal < -TOL ? 'var(--red)' : 'var(--green)'}"><b>${fmtN(bal)}</b></td>
     </tr>`;
   }).join('');
 
   const wRows = [...withdrawals].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(w => `<tr>
-    <td>${fmtDate(w.date)}</td><td>${esc(w.partner)}</td><td class="num">${fmt(w.amount)}</td><td>${esc(w.note || '')}</td>
+    <td>${fmtDate(w.date)}</td><td>${esc(w.partner)}</td><td class="num">${fmtN(w.amount)}</td><td>${esc(w.note || '')}</td>
     <td><button class="btn-danger btn-small" onclick="deleteWithdrawal('${w.id}')">×</button></td>
   </tr>`).join('');
 
@@ -1082,7 +1083,7 @@ function profitHTML() {
     </div>
 
     <div class="leg">
-      <h3 style="margin-bottom:8px">Partner balances (equal 3-way split of total profit) <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
+      <h3 style="margin-bottom:8px">Partner balances · 3-way split · amounts in RM <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
       <table><thead><tr><th>Partner</th><th class="num">Share</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
       <tbody>${partnerRows}</tbody></table>
       <div style="margin-top:8px"><button class="btn-secondary btn-small" onclick="savePartners()">Save Partner Names</button></div>
@@ -1102,7 +1103,7 @@ function profitHTML() {
     </div>
 
     <div class="leg" style="margin-top:14px">
-      <h3 style="margin-bottom:8px">All withdrawals</h3>
+      <h3 style="margin-bottom:8px">All withdrawals · amounts in RM</h3>
       ${withdrawals.length ? `<table><thead><tr><th>Date</th><th>Partner</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>${wRows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No withdrawals yet.</div>'}
     </div>`;
 }
