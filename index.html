@@ -188,7 +188,7 @@
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Search company…" oninput="render()">
-  <select id="filterPic" onchange="render()"><option value="">All PIC</option></select>
+  <select id="filterPic" onchange="render()"><option value="">All Agents</option></select>
   <select id="filterStatus" onchange="render()">
     <option value="">All status</option>
     <option value="open">Open</option>
@@ -216,7 +216,7 @@
     <div class="form-grid">
       <div class="field"><label>Date</label><input type="date" id="f_date"></div>
       <div class="field"><label>Company</label><input type="text" id="f_company" placeholder="Company name"></div>
-      <div class="field"><label>PIC</label><input type="text" id="f_pic" placeholder="e.g. Jet"></div>
+      <div class="field"><label>Agent</label><input type="text" id="f_pic" list="agentList" placeholder="Choose or type new agent" oninput="agentChanged()"><datalist id="agentList"></datalist></div>
       <div class="field"><label>Invoice Amount (RM)</label><input type="number" id="f_amount" step="0.01" min="0" oninput="updatePreview()"></div>
       <div class="field"><label>Selling %</label><input type="number" id="f_selling" step="0.01" min="0" oninput="updatePreview()"></div>
       <div class="field"><label>Cost %</label><input type="number" id="f_cost" step="0.01" min="0" value="1" oninput="updatePreview()"></div>
@@ -429,8 +429,8 @@ function render() {
   // PIC filter options
   const picSel = document.getElementById('filterPic');
   const currentPic = picSel.value;
-  const pics = [...new Set(cases.map(c => c.pic).filter(Boolean))].sort();
-  picSel.innerHTML = '<option value="">All PIC</option>' + pics.map(p => `<option ${p === currentPic ? 'selected' : ''} value="${esc(p)}">${esc(p)}</option>`).join('');
+  const pics = agentNames();
+  picSel.innerHTML = '<option value="">All Agents</option>' + pics.map(p => `<option ${p === currentPic ? 'selected' : ''} value="${esc(p)}">${esc(p)}</option>`).join('');
 
   const q = document.getElementById('search').value.trim().toLowerCase();
   const fPic = picSel.value;
@@ -450,7 +450,7 @@ function render() {
 
   wrap.innerHTML = `<table>
     <thead><tr>
-      <th>Date</th><th>Company</th><th>PIC</th><th class="num">Amount</th>
+      <th>Date</th><th>Company</th><th>Agent</th><th class="num">Amount</th>
       <th>Invoice</th><th>Customer Paid</th><th>Supplier Cash In</th><th>Paid to Client</th>
       <th class="num">Profit</th><th>Status</th><th class="actions-col">Action</th>
     </tr></thead>
@@ -480,10 +480,27 @@ function render() {
 }
 
 /* ---------- add / edit case ---------- */
+// every agent ever used (saved list + names already on cases)
+function agentNames() {
+  return [...new Set([...(settings.agents || []), ...cases.map(c => c.pic)].filter(Boolean))].sort();
+}
+
+// when an existing agent is chosen, prefill their usual rates from their last saved case
+function agentChanged() {
+  const name = document.getElementById('f_pic').value.trim();
+  const d = (settings.agentDefaults || {})[name];
+  if (!d) return;
+  document.getElementById('f_selling').value = d.sellingPct;
+  document.getElementById('f_cost').value = d.costPct;
+  document.getElementById('f_referral').value = d.referralPct;
+  updatePreview();
+}
+
 function openCaseForm(id) {
   const c = id ? cases.find(c => c.id === id) : null;
   if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   editingId = id || null;
+  document.getElementById('agentList').innerHTML = agentNames().map(p => `<option value="${esc(p)}"></option>`).join('');
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
   document.getElementById('f_date').value = c ? c.date : today();
   document.getElementById('f_company').value = c ? c.company : '';
@@ -512,21 +529,40 @@ function updatePreview() {
 }
 
 function saveCaseForm() {
+  const date = document.getElementById('f_date').value;
   const company = document.getElementById('f_company').value.trim();
-  const amount = Number(document.getElementById('f_amount').value);
-  if (!company) { notify('Please enter the company name.', true); return; }
-  if (!amount || amount <= 0) { notify('Please enter a valid invoice amount.', true); return; }
+  const pic = document.getElementById('f_pic').value.trim();
+  const amountRaw = document.getElementById('f_amount').value.trim();
+  const sellingRaw = document.getElementById('f_selling').value.trim();
+  const costRaw = document.getElementById('f_cost').value.trim();
+  const referralRaw = document.getElementById('f_referral').value.trim();
 
-  const data = {
-    date: document.getElementById('f_date').value || today(),
-    company,
-    pic: document.getElementById('f_pic').value.trim(),
-    amount,
-    sellingPct: Number(document.getElementById('f_selling').value) || 0,
-    costPct: Number(document.getElementById('f_cost').value) || 0,
-    referralPct: Number(document.getElementById('f_referral').value) || 0,
-    referralName: document.getElementById('f_referralName').value.trim(),
-  };
+  // all fields compulsory except referral name
+  if (!date) { notify('Please choose the date.', true); return; }
+  if (!company) { notify('Please enter the company name.', true); return; }
+  if (!pic) { notify('Please choose or type the agent name.', true); return; }
+  if (amountRaw === '') { notify('Please enter the invoice amount.', true); return; }
+  if (sellingRaw === '') { notify('Please enter the Selling %.', true); return; }
+  if (costRaw === '') { notify('Please enter the Cost %.', true); return; }
+  if (referralRaw === '') { notify('Please enter the Referral % (use 0 if none).', true); return; }
+
+  const amount = Number(amountRaw);
+  const sellingPct = Number(sellingRaw);
+  const costPct = Number(costRaw);
+  const referralPct = Number(referralRaw);
+
+  // reasonable values only
+  if (!isFinite(amount) || amount <= 0) { notify('Invoice amount must be a number above 0.', true); return; }
+  if (!isFinite(sellingPct) || sellingPct <= 0 || sellingPct >= 100) { notify('Selling % must be between 0 and 100.', true); return; }
+  if (!isFinite(costPct) || costPct < 0 || costPct >= 100) { notify('Cost % must be between 0 and 100.', true); return; }
+  if (!isFinite(referralPct) || referralPct < 0 || referralPct >= 100) { notify('Referral % must be between 0 and 100.', true); return; }
+  if (sellingPct - costPct - referralPct <= 0) {
+    notify(`No profit! Selling % (${sellingPct}%) must be HIGHER than Cost % + Referral % (${costPct}% + ${referralPct}% = ${costPct + referralPct}%).`, true);
+    return;
+  }
+
+  const data = { date, company, pic, amount, sellingPct, costPct, referralPct,
+    referralName: document.getElementById('f_referralName').value.trim() };
 
   if (editingId) {
     Object.assign(cases.find(c => c.id === editingId), data);
@@ -534,6 +570,11 @@ function saveCaseForm() {
     cases.push({ id: uid(), invoiceIssued: false, referralPaid: false,
       customerPayments: [], supplierPayments: [], clientPayouts: [], ...data });
   }
+
+  // remember this agent and their rates for next time
+  if (!(settings.agents || []).includes(pic)) settings.agents = [...(settings.agents || []), pic];
+  settings.agentDefaults = { ...(settings.agentDefaults || {}), [pic]: { sellingPct, costPct, referralPct } };
+
   save(); closeOverlay('formOverlay'); render();
   notify(editingId ? 'Case updated.' : 'Case added — click Update on the row to key in payments.');
 }
@@ -616,7 +657,7 @@ function renderDetail() {
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
-        <div class="meta">${esc(c.date)} · PIC: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+        <div class="meta">${esc(c.date)} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
       </div>
       ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
     </div>
@@ -938,7 +979,7 @@ function importJSON(ev) {
 }
 
 function exportCSV() {
-  const rows = [['Date','Company','PIC','Referral Name','Invoice Amount','Invoice Issued','Selling %','Cost %','Referral %',
+  const rows = [['Date','Company','Agent','Referral Name','Invoice Amount','Invoice Issued','Selling %','Cost %','Referral %',
     'Expected from Customer','Received from Customer','Customer Status',
     'Expected from Supplier','Received from Supplier','Supplier Status',
     'Expected Payout to Client','Paid to Client','Payout Status',
