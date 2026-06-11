@@ -3,29 +3,45 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Invoice Tracker</title>
+<title>Invoice Tracker | DLS Technology</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #f4f5f7;
-    --card: #ffffff;
-    --text: #1a1d24;
-    --muted: #6b7280;
-    --border: #e2e4e9;
-    --accent: #b8860b;
-    --accent-soft: #fdf3d7;
-    --green: #15803d;
-    --green-soft: #dcfce7;
+    /* DLS Technology brand palette — deep teal-navy + warm tan */
+    --bg: #FAF5EE;          /* brand cream page surface */
+    --card: #FFFFFF;
+    --text: #14222C;        /* ink */
+    --muted: #6B7884;       /* ink-3 */
+    --border: #E4DDD0;      /* line */
+    --accent: #1F4D63;      /* primary deep teal-navy */
+    --accent-2: #143947;    /* darker hover */
+    --accent-soft: #F2E9DA; /* light tan band */
+    --tan: #D4B190;
+    --tan-2: #E4C8A9;
+    --tan-3: #B8946F;
+    --green: #2E7D5B;       /* ok */
+    --green-soft: #DDEFE2;
     --red: #b91c1c;
     --red-soft: #fee2e2;
-    --amber: #b45309;
-    --amber-soft: #fef3c7;
-    --blue: #1d4ed8;
-    --blue-soft: #dbeafe;
+    --amber: #7A4A0E;       /* warn ink */
+    --amber-soft: #F8E6CB;  /* warn bg */
+    --blue: #2C6480;        /* brand mid teal */
+    --blue-soft: #DEEBF1;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
-  h1 { font-size: 22px; margin-bottom: 4px; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); padding: 24px; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--tan-3); font-weight: 700; }
+  h1 { font-size: 24px; margin-bottom: 4px; color: var(--accent); font-weight: 800; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+
+  .period-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 10px 14px; margin-bottom: 14px; }
+  .period-label { font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--tan-3); margin-right: 4px; }
+  .chip { background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer; }
+  .chip:hover { background: var(--tan-2); }
+  .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  #customRange input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
   .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
@@ -41,10 +57,12 @@
   .spacer { flex: 1; }
 
   button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
-  .btn-primary { background: var(--accent); color: #fff; }
-  .btn-primary:hover { background: #9a700a; }
+  .btn-primary { background: var(--accent); color: #fff; box-shadow: 0 8px 20px -6px rgba(31,77,99,0.45); }
+  .btn-primary:hover { background: var(--accent-2); }
+  .btn-accent { background: var(--tan); color: var(--accent-2); box-shadow: 0 8px 20px -6px rgba(212,177,144,0.7); }
+  .btn-accent:hover { background: var(--tan-2); }
   .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
-  .btn-secondary:hover { background: #eef0f3; }
+  .btn-secondary:hover { background: var(--accent-soft); }
   .btn-danger { background: var(--red-soft); color: var(--red); }
   .btn-small { padding: 5px 9px; font-size: 12px; }
 
@@ -55,9 +73,9 @@
   .badge.clickable { cursor: pointer; }
   .badge.clickable:hover { outline: 2px solid currentColor; }
   .hint { background: var(--blue-soft); color: var(--blue); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; }
-  th { background: var(--accent-soft); text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; color: #7a5c06; white-space: nowrap; }
+  th { background: var(--accent-soft); text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; color: var(--accent); white-space: nowrap; }
   td { padding: 10px 12px; border-top: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
-  tr.row:hover { background: #fafbfc; cursor: pointer; }
+  tr.row:hover { background: #FBF7F0; cursor: pointer; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
   .badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
@@ -66,9 +84,9 @@
   .badge.none { background: var(--red-soft); color: var(--red); }
   .badge.closed { background: var(--green); color: #fff; }
   .badge.open { background: var(--blue-soft); color: var(--blue); }
-  .badge.na { background: #eef0f3; color: var(--muted); }
+  .badge.na { background: var(--accent-soft); color: var(--muted); }
 
-  .pbar { height: 4px; background: #eef0f3; border-radius: 2px; margin-top: 5px; min-width: 90px; }
+  .pbar { height: 4px; background: #EFE9DD; border-radius: 2px; margin-top: 5px; min-width: 90px; }
   .pbar > div { height: 100%; border-radius: 2px; background: var(--green); }
   .legcell .amt { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
 
@@ -102,12 +120,12 @@
   .leg table { border: none; background: rgba(255,255,255,0.65); }
   .leg td, .leg th { padding: 6px 8px; font-size: 13px; }
   .leg th { background: var(--bg); color: var(--muted); }
-  .leg.leg-customer { background: #f3f7ff; border-color: #c3d6f7; border-left: 5px solid var(--blue); }
-  .leg.leg-supplier { background: #f2fbf5; border-color: #bbe5c8; border-left: 5px solid var(--green); }
-  .leg.leg-payout   { background: #fff7ec; border-color: #f1d8ab; border-left: 5px solid var(--amber); }
+  .leg.leg-customer { background: #EEF4F7; border-color: #C5D9E2; border-left: 5px solid var(--blue); }
+  .leg.leg-supplier { background: #F0F8F2; border-color: #BBDCC8; border-left: 5px solid var(--green); }
+  .leg.leg-payout   { background: #FAF1E4; border-color: #E8D4B4; border-left: 5px solid var(--tan-3); }
   .leg.leg-customer h3 { color: var(--blue); }
   .leg.leg-supplier h3 { color: var(--green); }
-  .leg.leg-payout h3 { color: var(--amber); }
+  .leg.leg-payout h3 { color: var(--tan-3); }
   .txn-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .txn-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
   .txn-form input.amt { width: 130px; }
@@ -122,7 +140,7 @@
   .footer-note { margin-top: 14px; font-size: 12px; color: var(--muted); }
 
   .toast-wrap { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 8px; z-index: 100; align-items: center; }
-  .toast { background: #1a1d24; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .toast { background: #0E2A35; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
   .toast.error { background: var(--red); }
   #storageWarn { display: none; background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
 
@@ -146,8 +164,23 @@
 </head>
 <body>
 
+<div class="eyebrow">DLS Technology · Internal System</div>
 <h1>Invoice Tracker</h1>
 <div class="sub">Track each case from invoice issued → customer payment → supplier cash → client payout. Partial payments supported.</div>
+
+<div class="period-bar">
+  <span class="period-label">📅 Report Period</span>
+  <button class="chip" data-r="7d" onclick="setRange('7d')">7 Days</button>
+  <button class="chip" data-r="1m" onclick="setRange('1m')">1 Month</button>
+  <button class="chip" data-r="6m" onclick="setRange('6m')">6 Months</button>
+  <button class="chip active" data-r="all" onclick="setRange('all')">ALL</button>
+  <button class="chip" data-r="custom" onclick="setRange('custom')">Custom</button>
+  <span id="customRange" style="display:none; align-items:center; gap:6px">
+    <input type="date" id="rangeFrom" onchange="render()">
+    <span style="color:var(--muted); font-size:13px">to</span>
+    <input type="date" id="rangeTo" onchange="render()">
+  </span>
+</div>
 
 <div id="storageWarn">⚠️ This window cannot save data permanently — your entries will disappear when you close it. Open the app in Safari or Chrome instead, or click <b>Backup</b> before closing to download your data.</div>
 
@@ -161,15 +194,6 @@
     <option value="open">Open</option>
     <option value="closed">Closed</option>
   </select>
-  <select id="filterRange" onchange="onRangeChange()">
-    <option value="all">All time</option>
-    <option value="7d">Last 7 days</option>
-    <option value="1m">Last 1 month</option>
-    <option value="6m">Last 6 months</option>
-    <option value="custom">Custom dates…</option>
-  </select>
-  <input type="date" id="rangeFrom" style="display:none" onchange="render()" title="From date">
-  <input type="date" id="rangeTo" style="display:none" onchange="render()" title="To date">
   <div class="spacer"></div>
   <button class="btn-secondary" id="syncBtn" onclick="openSync()">☁️ Sync: Off</button>
   <button class="btn-secondary" onclick="openCash()">🪙 Cash Book</button>
@@ -177,7 +201,7 @@
   <button class="btn-secondary" onclick="exportJSON()">Backup</button>
   <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Restore</button>
   <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
-  <button class="btn-primary" onclick="openCaseForm()">+ New Case</button>
+  <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
 </div>
 
 <div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — tick <b>Invoice Issued</b> and key in payments there (partial amounts are fine), then click <b>💾 Save</b> to keep the changes (Cancel discards them). Closed cases are locked 🔒 — unlocking them needs your edit password. Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case.</div>
@@ -286,23 +310,23 @@ const sum = txns => (txns || []).reduce((a, t) => a + (Number(t.amount) || 0), 0
 const TOL = 0.005;
 
 /* ---------- date range filter ---------- */
+let rangeMode = 'all';
 function getRange() {
-  const v = document.getElementById('filterRange').value;
-  if (v === 'all') return null;
-  if (v === 'custom') {
+  if (rangeMode === 'all') return null;
+  if (rangeMode === 'custom') {
     const from = document.getElementById('rangeFrom').value;
     const to = document.getElementById('rangeTo').value;
     if (!from && !to) return null;
     return { from: from || '0000-01-01', to: to || '9999-12-31' };
   }
-  const days = { '7d': 7, '1m': 30, '6m': 182 }[v];
+  const days = { '7d': 7, '1m': 30, '6m': 182 }[rangeMode];
   return { from: new Date(Date.now() - days * 86400000).toISOString().slice(0, 10), to: today() };
 }
 const inRange = (dateStr, r) => !r || ((dateStr || '') >= r.from && (dateStr || '') <= r.to);
-function onRangeChange() {
-  const custom = document.getElementById('filterRange').value === 'custom';
-  document.getElementById('rangeFrom').style.display = custom ? '' : 'none';
-  document.getElementById('rangeTo').style.display = custom ? '' : 'none';
+function setRange(v) {
+  rangeMode = v;
+  document.querySelectorAll('.chip').forEach(b => b.classList.toggle('active', b.dataset.r === v));
+  document.getElementById('customRange').style.display = v === 'custom' ? 'inline-flex' : 'none';
   render();
 }
 
