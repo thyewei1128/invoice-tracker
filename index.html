@@ -200,6 +200,9 @@
     .card { padding: 10px 12px; }
     .card .value { font-size: 16px; }
     .toolbar input[type=text] { width: 100%; }
+    /* period chips: all fit in one row, no scrolling */
+    .period-bar { gap: 5px; padding: 6px 8px; }
+    .chip { padding: 7px 11px; font-size: 12px; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
     .overlay { padding: 22px 12px 110px; }
     .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
@@ -218,11 +221,11 @@
 
 <div class="period-bar">
   <button class="chip" data-r="today" onclick="setRange('today')">Today</button>
-  <button class="chip" data-r="7d" onclick="setRange('7d')">7 Days</button>
-  <button class="chip" data-r="1m" onclick="setRange('1m')">1 Month</button>
-  <button class="chip" data-r="6m" onclick="setRange('6m')">6 Months</button>
+  <button class="chip" data-r="7d" onclick="setRange('7d')">7D</button>
+  <button class="chip" data-r="1m" onclick="setRange('1m')">1M</button>
+  <button class="chip" data-r="6m" onclick="setRange('6m')">6M</button>
   <button class="chip active" data-r="all" onclick="setRange('all')">ALL</button>
-  <button class="chip" data-r="custom" onclick="setRange('custom')">Custom</button>
+  <button class="chip" data-r="custom" onclick="setRange('custom')">📅</button>
   <span id="customRange" style="display:none; align-items:center; gap:6px">
     <input type="date" id="rangeFrom" onchange="render()">
     <span style="color:var(--muted); font-size:13px">to</span>
