@@ -161,6 +161,15 @@
     <option value="open">Open</option>
     <option value="closed">Closed</option>
   </select>
+  <select id="filterRange" onchange="onRangeChange()">
+    <option value="all">All time</option>
+    <option value="7d">Last 7 days</option>
+    <option value="1m">Last 1 month</option>
+    <option value="6m">Last 6 months</option>
+    <option value="custom">Custom dates…</option>
+  </select>
+  <input type="date" id="rangeFrom" style="display:none" onchange="render()" title="From date">
+  <input type="date" id="rangeTo" style="display:none" onchange="render()" title="To date">
   <div class="spacer"></div>
   <button class="btn-secondary" id="syncBtn" onclick="openSync()">☁️ Sync: Off</button>
   <button class="btn-secondary" onclick="openCash()">🪙 Cash Book</button>
@@ -213,6 +222,11 @@
   <div class="modal" id="syncModal"></div>
 </div>
 
+<!-- Profit & partners modal -->
+<div class="overlay" id="profitOverlay">
+  <div class="modal" id="profitModal"></div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <script>
@@ -220,6 +234,8 @@ const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
 let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
+let withdrawals = [];   // profit taken by partners: {id, date, partner, amount, note}
+let partners = ['Partner 1', 'Partner 2', 'Partner 3'];   // equal 3-way split
 let updatedAt = 0;      // last local edit time, used to decide which copy is newer
 let editingId = null;
 
@@ -228,15 +244,20 @@ function load() {
   try {
     const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (Array.isArray(data)) { cases = data; adjustments = []; }      // old format
-    else { cases = data?.cases || []; adjustments = data?.adjustments || []; updatedAt = data?.updatedAt || 0; }
+    else {
+      cases = data?.cases || []; adjustments = data?.adjustments || []; updatedAt = data?.updatedAt || 0;
+      withdrawals = data?.withdrawals || [];
+      if (Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
+    }
   }
   catch (e) { cases = []; adjustments = []; }
   // warn upfront if this environment cannot persist data
   try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
 }
+const fullData = () => ({ cases, adjustments, withdrawals, partners, updatedAt });
 function persist() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cases, adjustments, updatedAt })); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fullData())); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
 }
 function save() {
@@ -261,6 +282,27 @@ const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sum = txns => (txns || []).reduce((a, t) => a + (Number(t.amount) || 0), 0);
 const TOL = 0.005;
+
+/* ---------- date range filter ---------- */
+function getRange() {
+  const v = document.getElementById('filterRange').value;
+  if (v === 'all') return null;
+  if (v === 'custom') {
+    const from = document.getElementById('rangeFrom').value;
+    const to = document.getElementById('rangeTo').value;
+    if (!from && !to) return null;
+    return { from: from || '0000-01-01', to: to || '9999-12-31' };
+  }
+  const days = { '7d': 7, '1m': 30, '6m': 182 }[v];
+  return { from: new Date(Date.now() - days * 86400000).toISOString().slice(0, 10), to: today() };
+}
+const inRange = (dateStr, r) => !r || ((dateStr || '') >= r.from && (dateStr || '') <= r.to);
+function onRangeChange() {
+  const custom = document.getElementById('filterRange').value === 'custom';
+  document.getElementById('rangeFrom').style.display = custom ? '' : 'none';
+  document.getElementById('rangeTo').style.display = custom ? '' : 'none';
+  render();
+}
 
 function computed(c) {
   const amount = Number(c.amount) || 0;
@@ -301,20 +343,26 @@ function cashMovements() {
     if (c.referralPaid && x.referralAmount > TOL) moves.push({ date: c.referralPaidDate || c.date, amount: -x.referralAmount, label: `Referral fee — ${c.company}${c.referralName ? ' (' + c.referralName + ')' : ''}`, note: '' });
   }
   for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.type === 'in' ? 'Own money in' : 'Cash taken out', note: a.note || '', adjId: a.id });
+  for (const w of withdrawals) moves.push({ date: w.date, amount: -(Number(w.amount) || 0), label: `Profit withdrawal — ${w.partner}`, note: w.note || '' });
   moves.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   return moves;
 }
 const cashOnHand = () => cashMovements().reduce((a, m) => a + m.amount, 0);
 
 /* ---------- summary ---------- */
-function renderSummary() {
-  const open = cases.filter(c => !computed(c).closed);
-  const closedCases = cases.filter(c => computed(c).closed);
+const realizedProfitAll = () => cases.filter(c => computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
+const withdrawnAll = () => sum(withdrawals);
+
+function renderSummary(list, rangeOn) {
+  const open = list.filter(c => !computed(c).closed);
+  const closedCases = list.filter(c => computed(c).closed);
   const outstandingCustomer = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedCustomer - x.recvCustomer); }, 0);
   const outstandingSupplier = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedSupplier - x.recvSupplier); }, 0);
   const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedPayout - x.paidClient); }, 0);
   const realized = closedCases.reduce((a, c) => a + computed(c).profitAmount, 0);
   const pending = open.reduce((a, c) => a + computed(c).profitAmount, 0);
+  const balanceProfit = realizedProfitAll() - withdrawnAll();
+  const tag = rangeOn ? '<span style="font-size:10px;color:var(--blue)"> · period</span>' : '';
 
   const cash = cashOnHand();
   document.getElementById('summaryCards').innerHTML = `
@@ -323,13 +371,18 @@ function renderSummary() {
       <div class="value ${cash < 0 ? 'red' : 'green'}">${fmt(cash)}</div>
       <div style="font-size:11px;color:var(--muted);margin-top:4px">click for cash book</div>
     </div>
-    <div class="card"><div class="label">Open Cases</div><div class="value">${open.length}</div></div>
-    <div class="card"><div class="label">Closed Cases</div><div class="value">${closedCases.length}</div></div>
-    <div class="card"><div class="label">Owed by Customers</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
-    <div class="card"><div class="label">Owed by Suppliers</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
-    <div class="card"><div class="label">To Pay Out to Clients</div><div class="value red">${fmt(outstandingPayout)}</div></div>
-    <div class="card"><div class="label">Profit (Closed)</div><div class="value green">${fmt(realized)}</div></div>
-    <div class="card"><div class="label">Profit (Pending)</div><div class="value">${fmt(pending)}</div></div>`;
+    <div class="card" style="cursor:pointer; border-color: var(--green)" onclick="openProfit()">
+      <div class="label">Balance Profit 🤝</div>
+      <div class="value ${balanceProfit < 0 ? 'red' : 'green'}">${fmt(balanceProfit)}</div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px">click for partners &amp; withdrawals</div>
+    </div>
+    <div class="card"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
+    <div class="card"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
+    <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
+    <div class="card"><div class="label">Owed by Suppliers${tag}</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
+    <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>
+    <div class="card"><div class="label">Profit (Closed)${tag}</div><div class="value green">${fmt(realized)}</div></div>
+    <div class="card"><div class="label">Profit (Pending)${tag}</div><div class="value">${fmt(pending)}</div></div>`;
 }
 
 /* ---------- table ---------- */
@@ -344,7 +397,9 @@ function legBadge(status, got, target) {
 }
 
 function render() {
-  renderSummary();
+  const range = getRange();
+  const dateFiltered = range ? cases.filter(c => inRange(c.date, range)) : cases;
+  renderSummary(dateFiltered, !!range);
   // PIC filter options
   const picSel = document.getElementById('filterPic');
   const currentPic = picSel.value;
@@ -355,7 +410,7 @@ function render() {
   const fPic = picSel.value;
   const fStatus = document.getElementById('filterStatus').value;
 
-  let list = cases.map(c => ({ c, x: computed(c) }));
+  let list = dateFiltered.map(c => ({ c, x: computed(c) }));
   if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
   if (fPic) list = list.filter(r => r.c.pic === fPic);
   if (fStatus) list = list.filter(r => fStatus === 'closed' ? r.x.closed : !r.x.closed);
@@ -627,6 +682,110 @@ function exportCashCSV() {
   download(`cash-book-${today()}.csv`, csv, 'text/csv');
 }
 
+/* ---------- profit & partners ---------- */
+function openProfit() {
+  const range = getRange();
+  const realized = realizedProfitAll();
+  const withdrawn = withdrawnAll();
+  const balance = realized - withdrawn;
+  const pending = cases.filter(c => !computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
+  const periodProfit = cases.filter(c => computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).profitAmount, 0);
+
+  const partnerRows = partners.map((p, i) => {
+    const share = realized / 3;
+    const taken = sum(withdrawals.filter(w => w.partner === p));
+    const bal = share - taken;
+    return `<tr>
+      <td><input type="text" id="p_name_${i}" value="${esc(p)}" style="border:1px solid var(--border);border-radius:6px;padding:5px 8px;width:140px"></td>
+      <td class="num">${fmt(share)}</td>
+      <td class="num">${fmt(taken)}</td>
+      <td class="num" style="color:${bal < -TOL ? 'var(--red)' : 'var(--green)'}"><b>${fmt(bal)}</b></td>
+    </tr>`;
+  }).join('');
+
+  const wRows = [...withdrawals].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(w => `<tr>
+    <td>${esc(w.date)}</td><td>${esc(w.partner)}</td><td class="num">${fmt(w.amount)}</td><td>${esc(w.note || '')}</td>
+    <td><button class="btn-danger btn-small" onclick="deleteWithdrawal('${w.id}')">×</button></td>
+  </tr>`).join('');
+
+  document.getElementById('profitModal').innerHTML = `
+    <div class="detail-head">
+      <div>
+        <h2 style="margin-bottom:0">Profit &amp; Partners 🤝</h2>
+        <div class="meta">Profit from closed cases, split equally between 3 partners. Withdrawals are also recorded as cash out in the Cash Book.</div>
+      </div>
+      <span class="badge ${balance < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Balance Profit: ${fmt(balance)}</span>
+    </div>
+
+    <div class="figures">
+      <div class="fig"><div class="label">Total Profit (closed cases)</div><div class="value" style="color:var(--green)">${fmt(realized)}</div></div>
+      <div class="fig"><div class="label">Total Withdrawn</div><div class="value">${fmt(withdrawn)}</div></div>
+      <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
+      <div class="fig"><div class="label">Profit Pending (open cases)</div><div class="value">${fmt(pending)}</div></div>
+      ${range ? `<div class="fig"><div class="label">Profit in Selected Period</div><div class="value" style="color:var(--blue)">${fmt(periodProfit)}</div></div>` : ''}
+    </div>
+
+    <div class="leg">
+      <h3 style="margin-bottom:8px">Partner balances (equal 3-way split of total profit)</h3>
+      <table><thead><tr><th>Partner</th><th class="num">Share of Profit</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
+      <tbody>${partnerRows}</tbody></table>
+      <div style="margin-top:8px"><button class="btn-secondary btn-small" onclick="savePartners()">Save Partner Names</button></div>
+    </div>
+
+    <div class="leg" style="margin-top:14px">
+      <h3>Record a profit withdrawal</h3>
+      <div class="txn-form" style="margin-top:8px">
+        <input type="date" id="w_date" value="${today()}">
+        <select id="w_partner" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          ${partners.map(p => `<option value="${esc(p)}">${esc(p)}</option>`).join('')}
+        </select>
+        <input type="number" class="amt" id="w_amount" placeholder="Amount (RM)" step="0.01" min="0">
+        <input type="text" class="note" id="w_note" placeholder="Note (optional)">
+        <button class="btn-primary btn-small" onclick="addWithdrawal()">Add Withdrawal</button>
+      </div>
+    </div>
+
+    <div class="leg" style="margin-top:14px">
+      <h3 style="margin-bottom:8px">All withdrawals</h3>
+      ${withdrawals.length ? `<table><thead><tr><th>Date</th><th>Partner</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>${wRows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No withdrawals yet.</div>'}
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOverlay('profitOverlay')">Close</button>
+    </div>`;
+  document.getElementById('profitOverlay').classList.add('show');
+}
+
+function addWithdrawal() {
+  const amount = Number(document.getElementById('w_amount').value);
+  if (!amount || amount <= 0) { notify('Please enter the withdrawal amount.', true); return; }
+  withdrawals.push({
+    id: uid(),
+    date: document.getElementById('w_date').value || today(),
+    partner: document.getElementById('w_partner').value,
+    amount,
+    note: document.getElementById('w_note').value.trim(),
+  });
+  save(); render(); openProfit();
+  notify('Withdrawal recorded.');
+}
+
+function deleteWithdrawal(id) {
+  withdrawals = withdrawals.filter(w => w.id !== id);
+  save(); render(); openProfit();
+}
+
+function savePartners() {
+  const newNames = [0, 1, 2].map(i => document.getElementById('p_name_' + i).value.trim() || `Partner ${i + 1}`);
+  // keep old withdrawals attached to the renamed partner
+  partners.forEach((oldName, i) => {
+    if (oldName !== newNames[i]) withdrawals.forEach(w => { if (w.partner === oldName) w.partner = newNames[i]; });
+  });
+  partners = newNames;
+  save(); render(); openProfit();
+  notify('Partner names saved.');
+}
+
 function addTxn(id, listKey, presetAmount) {
   const c = cases.find(c => c.id === id);
   const amount = presetAmount !== undefined ? presetAmount : Number(document.getElementById(`d_${listKey}_amount`).value);
@@ -653,7 +812,7 @@ function download(filename, text, type) {
 }
 
 function exportJSON() {
-  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify({ cases, adjustments }, null, 2), 'application/json');
+  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify(fullData(), null, 2), 'application/json');
 }
 
 function importJSON(ev) {
@@ -667,6 +826,8 @@ function importJSON(ev) {
       if (!Array.isArray(newCases)) throw new Error('Invalid format');
       cases = newCases;
       adjustments = (Array.isArray(data) ? [] : data?.adjustments) || [];
+      withdrawals = (Array.isArray(data) ? [] : data?.withdrawals) || [];
+      if (!Array.isArray(data) && Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
       save(); render();
       notify(`Restored ${newCases.length} cases from backup.`);
     } catch (e) { notify('Could not read that backup file.', true); }
@@ -733,7 +894,7 @@ async function cloudPush() {
     setSyncStatus('syncing');
     await gh('/gists/' + syncCfg.gistId, {
       method: 'PATCH',
-      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify({ cases, adjustments, updatedAt }) } } }),
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(fullData()) } } }),
     });
     setSyncStatus('ok');
   } catch (e) {
@@ -754,6 +915,8 @@ async function cloudPull(showMsg) {
       if ((data.updatedAt || 0) > (updatedAt || 0)) {
         cases = data.cases || [];
         adjustments = data.adjustments || [];
+        withdrawals = data.withdrawals || [];
+        if (Array.isArray(data.partners) && data.partners.length === 3) partners = data.partners;
         updatedAt = data.updatedAt || 0;
         persist(); render();
         if (showMsg) notify('Loaded newer data from cloud.');
@@ -783,7 +946,7 @@ async function connectSync() {
       const g = await gh('/gists', {
         method: 'POST',
         body: JSON.stringify({ description: 'Invoice Tracker data (private)', public: false,
-          files: { [GIST_FILE]: { content: JSON.stringify({ cases, adjustments, updatedAt }) } } }),
+          files: { [GIST_FILE]: { content: JSON.stringify(fullData()) } } }),
       });
       gistId = g.id;
     }
