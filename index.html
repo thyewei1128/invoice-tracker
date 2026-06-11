@@ -4,6 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Invoice Tracker | DLS Technology</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1F4D63">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Invoices">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -149,9 +157,27 @@
   .toast.error { background: var(--red); }
   #storageWarn { display: none; background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
 
+  /* Bottom app navigation (mobile only) */
+  .bottomnav { display: none; }
+
   /* Phone-friendly layout */
   @media (max-width: 640px) {
-    body { padding: 12px; }
+    body { padding: 12px; padding-bottom: 96px; }
+    .bottomnav {
+      position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+      display: grid; grid-template-columns: repeat(5, 1fr); align-items: end;
+      background: #0E2A35; border-top: 1px solid rgba(255,255,255,0.08);
+      padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+    }
+    .bn-item { background: none; border: none; color: #8FA6B2; font-size: 10px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 2px; }
+    .bn-item .bn-ico { font-size: 21px; line-height: 1; }
+    .bn-item.active { color: var(--tan); }
+    .bn-center { display: flex; flex-direction: column; align-items: center; gap: 2px; transform: translateY(-18px); }
+    .bn-fab { width: 56px; height: 56px; border-radius: 50%; background: var(--tan); color: var(--accent-2); font-size: 30px; font-weight: 800; border: 4px solid #0E2A35; box-shadow: 0 6px 18px rgba(0,0,0,0.35); padding: 0; line-height: 1; }
+    .bn-fab-label { font-size: 10px; color: var(--tan); font-weight: 700; }
+    /* tab views: Dashboard shows cards, Cases shows the list */
+    body.m-home .toolbar, body.m-home .hint, body.m-home #tableWrap, body.m-home .footer-note { display: none; }
+    body.m-cases .cards { display: none; }
     h1 { font-size: 19px; }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .card { padding: 10px 12px; }
@@ -167,7 +193,7 @@
   }
 </style>
 </head>
-<body>
+<body class="m-home">
 
 <div class="eyebrow">DLS Technology · Internal System</div>
 <h1>Invoice Tracker</h1>
@@ -257,6 +283,18 @@
 </div>
 
 <div class="toast-wrap" id="toasts"></div>
+
+<!-- Bottom app navigation (mobile) -->
+<nav class="bottomnav">
+  <button class="bn-item active" id="bn-home" onclick="mobileGo('home')"><span class="bn-ico">🏠</span><span>Dashboard</span></button>
+  <button class="bn-item" id="bn-cases" onclick="mobileGo('cases')"><span class="bn-ico">📋</span><span>Cases</span></button>
+  <div class="bn-center">
+    <button class="bn-fab" onclick="openCaseForm()">＋</button>
+    <span class="bn-fab-label">NEW CASE</span>
+  </div>
+  <button class="bn-item" onclick="openCash()"><span class="bn-ico">🪙</span><span>Cash</span></button>
+  <button class="bn-item" onclick="openProfit()"><span class="bn-ico">🤝</span><span>Profit</span></button>
+</nav>
 
 <script>
 const STORAGE_KEY = 'invoiceTrackerData_v1';
@@ -1230,10 +1268,20 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
 });
 
+/* ---------- mobile tab navigation ---------- */
+function mobileGo(v) {
+  document.body.classList.toggle('m-home', v === 'home');
+  document.body.classList.toggle('m-cases', v === 'cases');
+  document.getElementById('bn-home').classList.toggle('active', v === 'home');
+  document.getElementById('bn-cases').classList.toggle('active', v === 'cases');
+  window.scrollTo({ top: 0 });
+}
+
 load();
 render();
 if (syncCfg.token && syncCfg.gistId) { setSyncStatus('syncing'); cloudPull(); }
 else setSyncStatus('off');
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
 </html>

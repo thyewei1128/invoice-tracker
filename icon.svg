@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#1F4D63"/>
+  <rect x="136" y="96" width="240" height="320" rx="24" fill="#FAF5EE"/>
+  <rect x="168" y="144" width="176" height="20" rx="10" fill="#2C6480"/>
+  <rect x="168" y="192" width="176" height="20" rx="10" fill="#2C6480"/>
+  <rect x="168" y="240" width="120" height="20" rx="10" fill="#2C6480"/>
+  <circle cx="336" cy="336" r="88" fill="#D4B190"/>
+  <text x="336" y="370" font-family="Arial, Helvetica, sans-serif" font-size="96" font-weight="bold" fill="#143947" text-anchor="middle">RM</text>
+</svg>
