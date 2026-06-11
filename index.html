@@ -43,6 +43,9 @@
   .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--tan-3); font-weight: 700; }
   h1 { font-size: 24px; margin-bottom: 4px; color: var(--accent); font-weight: 800; letter-spacing: -0.01em; }
   .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+  .header-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+  .header-row h1 { margin-bottom: 0; }
+  #syncBtn { padding: 6px 11px; font-size: 12px; border-radius: 999px; flex: none; white-space: nowrap; }
 
   .period-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 8px 10px; margin-bottom: 14px; }
   .chip { flex: 1 1 0; text-align: center; white-space: nowrap; background: var(--accent-soft); border: 1px solid var(--border); border-radius: 999px; padding: 7px 6px; font-size: 13px; font-weight: 600; color: var(--accent); cursor: pointer; }
@@ -73,7 +76,7 @@
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input[type=text], .toolbar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
-  .toolbar input[type=text] { width: 220px; }
+  .toolbar input[type=text] { flex: 1; min-width: 140px; }
   .spacer { flex: 1; }
 
   button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; font-weight: 600; }
@@ -222,8 +225,13 @@
 </head>
 <body class="m-home">
 
-<div class="eyebrow">DLS Technology · Internal System</div>
-<h1 style="margin-bottom:12px">Invoice Tracker</h1>
+<div class="header-row">
+  <div>
+    <div class="eyebrow">DLS Technology · Internal System</div>
+    <h1>Invoice Tracker</h1>
+  </div>
+  <button class="btn-secondary" id="syncBtn" onclick="syncNowOrSetup()">☁️ Sync: Off</button>
+</div>
 
 <div class="period-bar">
   <button class="chip" data-r="today" onclick="setRange('today')">Today</button>
@@ -246,15 +254,12 @@
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
-  <button class="info-btn" onclick="showInfo('cases')" title="How to use">!</button>
   <select id="filterPic" onchange="onFilterChange()"><option value="">All Agents</option></select>
   <select id="filterStatus" onchange="onFilterChange()">
     <option value="">All status</option>
     <option value="open">Open</option>
     <option value="closed">Closed</option>
   </select>
-  <div class="spacer"></div>
-  <button class="btn-secondary" id="syncBtn" onclick="syncNowOrSetup()">☁️ Sync: Off</button>
   <button class="btn-secondary" id="profileBtn" onclick="openProfile()">⚙️ Profile</button>
   <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
   <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
@@ -336,7 +341,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.8.0 (12 Jun 2026)';
+const APP_VERSION = '1.8.1 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
