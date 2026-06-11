@@ -199,7 +199,9 @@
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .card { padding: 10px 12px; }
     .card .value { font-size: 16px; }
-    .toolbar input[type=text] { width: 100%; }
+    .toolbar input[type=text] { flex: 1; width: auto; min-width: 0; }
+    /* the center ➕ tab replaces the New Case button on mobile */
+    .toolbar .btn-accent { display: none; }
     /* period chips: all fit in one row, no scrolling */
     .period-bar { gap: 5px; padding: 6px 8px; }
     .chip { padding: 7px 11px; font-size: 12px; }
@@ -219,7 +221,7 @@
 <body class="m-home">
 
 <div class="eyebrow">DLS Technology · Internal System</div>
-<h1 style="margin-bottom:12px">Invoice Tracker <button class="info-btn" onclick="showInfo('app')">!</button></h1>
+<h1 style="margin-bottom:12px">Invoice Tracker</h1>
 
 <div class="period-bar">
   <button class="chip" data-r="today" onclick="setRange('today')">Today</button>
@@ -241,8 +243,8 @@
 <div class="chart-card" id="chartCard"></div>
 
 <div class="toolbar">
-  <button class="info-btn" onclick="showInfo('cases')" title="How to use">!</button>
   <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
+  <button class="info-btn" onclick="showInfo('cases')" title="How to use">!</button>
   <select id="filterPic" onchange="onFilterChange()"><option value="">All Agents</option></select>
   <select id="filterStatus" onchange="onFilterChange()">
     <option value="">All status</option>
@@ -332,6 +334,7 @@
 </nav>
 
 <script>
+const APP_VERSION = '1.7.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -1206,13 +1209,13 @@ const fmtSyncTime = ts => {
   if (!ts) return '';
   const d = new Date(ts);
   const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  return d.toISOString().slice(0, 10) === today() ? hm : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hm}`;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hm}`;
 };
 
 function setSyncStatus(s) {
   const b = document.getElementById('syncBtn');
   if (!b) return;
-  if (s === 'ok' && syncCfg.lastSyncAt) b.textContent = `☁️ Synced ${fmtSyncTime(syncCfg.lastSyncAt)}`;
+  if (s === 'ok' && syncCfg.lastSyncAt) b.innerHTML = `☁️ Synced ✓ <span style="font-size:11px;font-weight:500;color:var(--muted)">${fmtSyncTime(syncCfg.lastSyncAt)}</span>`;
   else b.textContent = { off: '☁️ Sync: Off', syncing: '⏳ Syncing…', ok: '☁️ Synced ✓', error: '⚠️ Sync Error' }[s] || '☁️ Sync';
 }
 
@@ -1449,9 +1452,15 @@ function openProfile() {
       </div>
     </div>
 
-    <div class="leg" style="background:var(--accent-soft)">
+    <div class="leg" style="margin-bottom:12px;background:var(--accent-soft)">
       <h3>🔐 Login &amp; Access Control</h3>
       <div style="font-size:13px;color:var(--muted);margin-top:6px">Coming soon — user accounts with company access control, managed from the admin panel.</div>
+    </div>
+
+    <div class="leg">
+      <h3>ℹ️ About</h3>
+      <div style="font-size:13px;line-height:1.7;margin-top:6px">${INFO.app.b}</div>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)">Invoice Tracker · DLS Technology · Version ${APP_VERSION}</div>
     </div>`;
   document.getElementById('profileOverlay').classList.add('show');
 }
