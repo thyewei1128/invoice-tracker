@@ -4,6 +4,6 @@
   <rect x="168" y="144" width="176" height="20" rx="10" fill="#2C6480"/>
   <rect x="168" y="192" width="176" height="20" rx="10" fill="#2C6480"/>
   <rect x="168" y="240" width="120" height="20" rx="10" fill="#2C6480"/>
-  <circle cx="336" cy="336" r="88" fill="#D4B190"/>
-  <text x="336" y="370" font-family="Arial, Helvetica, sans-serif" font-size="96" font-weight="bold" fill="#143947" text-anchor="middle">RM</text>
+  <circle cx="336" cy="336" r="84" fill="#D4B190"/>
+  <path d="M296 338 L324 366 L380 306" fill="none" stroke="#143947" stroke-width="26" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
