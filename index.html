@@ -200,15 +200,15 @@
     .bottomnav {
       position: fixed; left: 12px; right: 12px; bottom: calc(6px + env(safe-area-inset-bottom)); z-index: 60;
       display: grid; grid-template-columns: repeat(5, 1fr); align-items: center;
-      background: rgba(14, 42, 53, 0.78);
-      -webkit-backdrop-filter: blur(16px) saturate(160%);
-      backdrop-filter: blur(16px) saturate(160%);
+      background: rgba(14, 42, 53, 0.55);
+      -webkit-backdrop-filter: blur(18px) saturate(160%);
+      backdrop-filter: blur(18px) saturate(160%);
       border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 26px;
-      padding: 5px 6px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+      border-radius: 24px;
+      padding: 3px 6px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
     }
-    .bn-item { background: none; border: none; color: #A8BCC6; font-size: 9px; font-weight: 600; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 3px 2px; }
+    .bn-item { background: none; border: none; color: #B7C9D2; font-size: 9px; font-weight: 600; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; padding: 2px; }
     .bn-item .bn-ico { font-size: 25px; line-height: 1; }
     .bn-item.active { color: var(--tan); }
     .bn-center { display: flex; flex-direction: column; align-items: center; gap: 1px; transform: translateY(-12px); }
@@ -349,7 +349,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.12.5 (12 Jun 2026)';
+const APP_VERSION = '1.12.6 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
