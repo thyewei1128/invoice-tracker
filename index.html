@@ -186,6 +186,10 @@
   body.m-profile .cards, body.m-profile .chart-card, body.m-profile .toolbar, body.m-profile #tableWrap, body.m-profile .period-bar { display: none; }
   .page-section .card { padding: 18px; }
   .page-section h2 { font-size: 18px; color: var(--accent); margin-bottom: 14px; }
+  .page-back { float: right; }
+  .fin-tabs { display: flex; gap: 10px; margin: 14px 0 0; }
+  .fin-tab { flex: 1; padding: 12px 8px; border-radius: 10px; border: 1px solid var(--border); background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px; white-space: nowrap; }
+  .fin-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
   /* Bottom app navigation (mobile only) */
   .bottomnav { display: none; }
@@ -218,8 +222,8 @@
     /* period chips: spread across the full row */
     .period-bar { gap: 4px; padding: 6px 7px; }
     .chip { padding: 7px 2px; font-size: 11.5px; }
-    /* Profile lives in the bottom tab bar on mobile */
-    #profileBtn { display: none; }
+    /* Profile lives in the bottom tab bar on mobile; Back is desktop-only */
+    #profileBtn, .page-back { display: none; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
     .overlay { padding: 22px 12px 110px; }
     .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
@@ -306,19 +310,9 @@
   <div class="modal" id="detailModal"></div>
 </div>
 
-<!-- Cash book modal -->
-<div class="overlay" id="cashOverlay">
-  <div class="modal" id="cashModal"></div>
-</div>
-
 <!-- Sync modal -->
 <div class="overlay" id="syncOverlay">
   <div class="modal" id="syncModal"></div>
-</div>
-
-<!-- Profit & partners modal -->
-<div class="overlay" id="profitOverlay">
-  <div class="modal" id="profitModal"></div>
 </div>
 
 <!-- Info modal -->
@@ -342,7 +336,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.9.0 (12 Jun 2026)';
+const APP_VERSION = '1.10.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -393,6 +387,7 @@ function notify(msg, isError) {
 const fmt = n => 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const pct = n => (Number(n) || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 }) + '%';
 const today = () => new Date().toISOString().slice(0, 10);
+const fmtDate = s => { if (!s) return ''; const [y, m, d] = String(s).split('-'); return (y && m && d) ? `${d}/${m}/${y}` : esc(s); };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const sum = txns => (txns || []).reduce((a, t) => a + (Number(t.amount) || 0), 0);
@@ -668,7 +663,7 @@ function render() {
     <tbody>
     ${pageList.map(({ c, x }) => `
       <tr class="row" onclick="openDetail('${c.id}')">
-        <td>${esc(c.date)}</td>
+        <td>${fmtDate(c.date)}</td>
         <td><b>${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
         <td class="num">${fmt(x.amount)}</td>
@@ -869,7 +864,7 @@ function renderDetail() {
       <div class="target">${listKey === 'clientPayouts' ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
       ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th>${locked ? '' : '<th></th>'}</tr></thead><tbody>
         ${txns.map(t => `<tr>
-          <td>${esc(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
+          <td>${fmtDate(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
           ${locked ? '' : `<td><button class="btn-danger btn-small" onclick="deleteTxn('${listKey}','${t.id}')">×</button></td>`}
         </tr>`).join('')}
       </tbody></table>` : ''}
@@ -887,7 +882,7 @@ function renderDetail() {
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
-        <div class="meta">${esc(c.date)} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+        <div class="meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
       </div>
       ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
     </div>
@@ -972,15 +967,16 @@ function toggleInvoice(id) {
   save(); render();
 }
 
-/* ---------- cash book ---------- */
-function openCash() {
-  closeAllOverlays();
+/* ---------- cash book (shows inside the Finance page) ---------- */
+function openCash() { financeTab = 'cash'; mobileGo('finance'); }
+
+function cashBookHTML() {
   const moves = cashMovements();
   let running = 0;
   const rows = moves.map(m => {
     running += m.amount;
     return `<tr>
-      <td>${esc(m.date)}</td>
+      <td>${fmtDate(m.date)}</td>
       <td>${esc(m.label)}${m.note ? `<div style="font-size:11px;color:var(--muted)">${esc(m.note)}</div>` : ''}</td>
       <td class="num" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'} ${fmt(Math.abs(m.amount))}</td>
       <td class="num"><b>${fmt(running)}</b></td>
@@ -989,17 +985,10 @@ function openCash() {
   }).join('');
 
   const cash = cashOnHand();
-  document.getElementById('cashModal').innerHTML = `
-    <button class="modal-x" onclick="closeOverlay('cashOverlay')">✕</button>
-    <div class="detail-head">
-      <div>
-        <h2 style="margin-bottom:0">Cash Book <button class="info-btn" onclick="showInfo('cash')">!</button></h2>
-      </div>
-      <span class="badge ${cash < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Cash on Hand: ${fmt(cash)}</span>
-    </div>
-    ${cash < 0 ? `<div style="margin-top:10px;background:var(--red-soft);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px">You have paid out ${fmt(-cash)} more than the cash recorded coming in — that is your own money currently fronted. Record it with "Cash In" below if you put in capital.</div>` : ''}
+  return `
+    ${cash < 0 ? `<div style="margin-top:14px;background:var(--red-soft);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px">You have paid out ${fmt(-cash)} more than the cash recorded coming in — that is your own money currently fronted. Record it with "Cash In" below if you put in capital.</div>` : ''}
 
-    <div class="leg" style="margin-top:16px">
+    <div class="leg" style="margin-top:14px">
       <h3>Add Cash In / Cash Out</h3>
       <div class="txn-form" style="margin-top:8px">
         <input type="date" id="adj_date" value="${today()}">
@@ -1014,15 +1003,11 @@ function openCash() {
     </div>
 
     <div class="leg" style="margin-top:14px">
-      <h3 style="margin-bottom:8px">All cash movements (running balance)</h3>
+      <h3 style="margin-bottom:8px">All cash movements (running balance) <button class="info-btn" onclick="showInfo('cash')">!</button></h3>
       ${moves.length ? `<table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No cash movements yet. They appear automatically when you record supplier payments and client payouts in each case.</div>'}
     </div>
 
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="exportCashCSV()">Export Cash CSV</button>
-      <button class="btn-secondary" onclick="closeOverlay('cashOverlay')">Close</button>
-    </div>`;
-  document.getElementById('cashOverlay').classList.add('show');
+    <div style="margin-top:12px"><button class="btn-secondary btn-small" onclick="exportCashCSV()">Export Cash CSV</button></div>`;
 }
 
 function addAdjustment() {
@@ -1035,12 +1020,12 @@ function addAdjustment() {
     amount,
     note: document.getElementById('adj_note').value.trim(),
   });
-  save(); render(); openCash();
+  save(); render(); renderFinance();
 }
 
 function deleteAdjustment(id) {
   adjustments = adjustments.filter(a => a.id !== id);
-  save(); render(); openCash();
+  save(); render(); renderFinance();
 }
 
 function exportCashCSV() {
@@ -1048,15 +1033,16 @@ function exportCashCSV() {
   const rows = [['Date', 'Description', 'Note', 'Cash In', 'Cash Out', 'Balance']];
   for (const m of cashMovements()) {
     running += m.amount;
-    rows.push([m.date, m.label, m.note, m.amount >= 0 ? m.amount.toFixed(2) : '', m.amount < 0 ? (-m.amount).toFixed(2) : '', running.toFixed(2)]);
+    rows.push([fmtDate(m.date), m.label, m.note, m.amount >= 0 ? m.amount.toFixed(2) : '', m.amount < 0 ? (-m.amount).toFixed(2) : '', running.toFixed(2)]);
   }
   const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
   download(`cash-book-${today()}.csv`, csv, 'text/csv');
 }
 
-/* ---------- profit & partners ---------- */
-function openProfit() {
-  closeAllOverlays();
+/* ---------- profit withdrawal (shows inside the Finance page) ---------- */
+function openProfit() { financeTab = 'profit'; mobileGo('finance'); }
+
+function profitHTML() {
   const range = getRange();
   const realized = realizedProfitAll();
   const withdrawn = withdrawnAll();
@@ -1077,20 +1063,12 @@ function openProfit() {
   }).join('');
 
   const wRows = [...withdrawals].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map(w => `<tr>
-    <td>${esc(w.date)}</td><td>${esc(w.partner)}</td><td class="num">${fmt(w.amount)}</td><td>${esc(w.note || '')}</td>
+    <td>${fmtDate(w.date)}</td><td>${esc(w.partner)}</td><td class="num">${fmt(w.amount)}</td><td>${esc(w.note || '')}</td>
     <td><button class="btn-danger btn-small" onclick="deleteWithdrawal('${w.id}')">×</button></td>
   </tr>`).join('');
 
-  document.getElementById('profitModal').innerHTML = `
-    <button class="modal-x" onclick="closeOverlay('profitOverlay')">✕</button>
-    <div class="detail-head">
-      <div>
-        <h2 style="margin-bottom:0">Profit &amp; Partners 🤝 <button class="info-btn" onclick="showInfo('profit')">!</button></h2>
-      </div>
-      <span class="badge ${balance < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Balance Profit: ${fmt(balance)}</span>
-    </div>
-
-    <div class="figures">
+  return `
+    <div class="figures" style="margin-top:14px">
       <div class="fig"><div class="label">Total Profit (closed cases)</div><div class="value" style="color:var(--green)">${fmt(realized)}</div></div>
       <div class="fig"><div class="label">Total Withdrawn</div><div class="value">${fmt(withdrawn)}</div></div>
       <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
@@ -1099,7 +1077,7 @@ function openProfit() {
     </div>
 
     <div class="leg">
-      <h3 style="margin-bottom:8px">Partner balances (equal 3-way split of total profit)</h3>
+      <h3 style="margin-bottom:8px">Partner balances (equal 3-way split of total profit) <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
       <table><thead><tr><th>Partner</th><th class="num">Share of Profit</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
       <tbody>${partnerRows}</tbody></table>
       <div style="margin-top:8px"><button class="btn-secondary btn-small" onclick="savePartners()">Save Partner Names</button></div>
@@ -1121,12 +1099,7 @@ function openProfit() {
     <div class="leg" style="margin-top:14px">
       <h3 style="margin-bottom:8px">All withdrawals</h3>
       ${withdrawals.length ? `<table><thead><tr><th>Date</th><th>Partner</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody>${wRows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No withdrawals yet.</div>'}
-    </div>
-
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeOverlay('profitOverlay')">Close</button>
     </div>`;
-  document.getElementById('profitOverlay').classList.add('show');
 }
 
 function addWithdrawal() {
@@ -1139,13 +1112,13 @@ function addWithdrawal() {
     amount,
     note: document.getElementById('w_note').value.trim(),
   });
-  save(); render(); openProfit();
+  save(); render(); renderFinance();
   notify('Withdrawal recorded.');
 }
 
 function deleteWithdrawal(id) {
   withdrawals = withdrawals.filter(w => w.id !== id);
-  save(); render(); openProfit();
+  save(); render(); renderFinance();
 }
 
 function savePartners() {
@@ -1155,7 +1128,7 @@ function savePartners() {
     if (oldName !== newNames[i]) withdrawals.forEach(w => { if (w.partner === oldName) w.partner = newNames[i]; });
   });
   partners = newNames;
-  save(); render(); openProfit();
+  save(); render(); renderFinance();
   notify('Partner names saved.');
 }
 
@@ -1218,7 +1191,7 @@ function exportCSV() {
     'Referral Fee','Referral Paid','Profit %','Profit Amount','Case Status']];
   for (const c of cases) {
     const x = computed(c);
-    rows.push([c.date, c.company, c.pic, c.referralName || '', x.amount, c.invoiceIssued ? 'Yes' : 'No',
+    rows.push([fmtDate(c.date), c.company, c.pic, c.referralName || '', x.amount, c.invoiceIssued ? 'Yes' : 'No',
       c.sellingPct, c.costPct, c.referralPct,
       x.expectedCustomer.toFixed(2), x.recvCustomer.toFixed(2), x.sCustomer,
       x.expectedSupplier.toFixed(2), x.recvSupplier.toFixed(2), x.sSupplier,
@@ -1245,7 +1218,7 @@ const fmtSyncTime = ts => {
   if (!ts) return '';
   const d = new Date(ts);
   const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(2)} ${hm}`;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${hm}`;
 };
 
 function setSyncStatus(s) {
@@ -1438,24 +1411,26 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- finance & profile pages ---------- */
+let financeTab = 'cash';   // which section shows at the bottom of the Finance page
 function openFinance() { mobileGo('finance'); }
 function openProfile() { mobileGo('profile'); }
+function setFinTab(t) { financeTab = t; renderFinance(); }
 
 function renderFinance() {
   const cash = cashOnHand();
   const balance = realizedProfitAll() - withdrawnAll();
   document.getElementById('financePage').innerHTML = `
     <div class="card">
-    <button class="btn-secondary btn-small" style="float:right" onclick="mobileGo('home')">← Back</button>
-    <h2>💼 Finance</h2>
-    <div class="figures">
+    <button class="btn-secondary btn-small page-back" onclick="mobileGo('home')">← Back</button>
+    <div class="figures" style="margin-top:0">
       <div class="fig"><div class="label">Cash on Hand</div><div class="value" style="color:${cash < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(cash)}</div></div>
       <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
     </div>
-    <div style="display:grid; gap:10px">
-      <button class="btn-primary" style="justify-content:flex-start" onclick="openCash()">🪙 Cash Book — Cash In / Cash Out</button>
-      <button class="btn-primary" style="justify-content:flex-start" onclick="openProfit()">🤝 Profit Withdrawal</button>
+    <div class="fin-tabs">
+      <button class="fin-tab ${financeTab === 'cash' ? 'active' : ''}" onclick="setFinTab('cash')">🪙 Cash Book</button>
+      <button class="fin-tab ${financeTab === 'profit' ? 'active' : ''}" onclick="setFinTab('profit')">🤝 Profit Withdrawal</button>
     </div>
+    <div id="financeBody">${financeTab === 'cash' ? cashBookHTML() : profitHTML()}</div>
     </div>`;
 }
 
@@ -1463,7 +1438,7 @@ function renderProfile() {
   const connected = !!(syncCfg.token && syncCfg.gistId);
   document.getElementById('profilePage').innerHTML = `
     <div class="card">
-    <button class="btn-secondary btn-small" style="float:right" onclick="mobileGo('home')">← Back</button>
+    <button class="btn-secondary btn-small page-back" style="float:right" onclick="mobileGo('home')">← Back</button>
     <h2>👤 Profile</h2>
 
     <div class="leg" style="margin-bottom:12px">
