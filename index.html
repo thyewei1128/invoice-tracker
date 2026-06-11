@@ -203,6 +203,8 @@
     /* period chips: all fit in one row, no scrolling */
     .period-bar { gap: 5px; padding: 6px 8px; }
     .chip { padding: 7px 11px; font-size: 12px; }
+    /* Profile lives in the bottom tab bar on mobile */
+    #profileBtn { display: none; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
     .overlay { padding: 22px 12px 110px; }
     .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
@@ -248,11 +250,8 @@
     <option value="closed">Closed</option>
   </select>
   <div class="spacer"></div>
-  <button class="btn-secondary" id="syncBtn" onclick="openSync()">☁️ Sync: Off</button>
-  <button class="btn-secondary" onclick="openCash()">🪙 Cash Book</button>
-  <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
-  <button class="btn-secondary" onclick="exportJSON()">Backup</button>
-  <button class="btn-secondary" onclick="document.getElementById('importFile').click()">Restore</button>
+  <button class="btn-secondary" id="syncBtn" onclick="syncNowOrSetup()">☁️ Sync: Off</button>
+  <button class="btn-secondary" id="profileBtn" onclick="openProfile()">⚙️ Profile</button>
   <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
   <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
 </div>
@@ -1203,9 +1202,24 @@ function saveSyncCfg() {
   try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch (e) {}
 }
 
+const fmtSyncTime = ts => {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  return d.toISOString().slice(0, 10) === today() ? hm : `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hm}`;
+};
+
 function setSyncStatus(s) {
   const b = document.getElementById('syncBtn');
-  if (b) b.textContent = { off: '☁️ Sync: Off', syncing: '⏳ Syncing…', ok: '☁️ Synced ✓', error: '⚠️ Sync Error' }[s] || '☁️ Sync';
+  if (!b) return;
+  if (s === 'ok' && syncCfg.lastSyncAt) b.textContent = `☁️ Synced ${fmtSyncTime(syncCfg.lastSyncAt)}`;
+  else b.textContent = { off: '☁️ Sync: Off', syncing: '⏳ Syncing…', ok: '☁️ Synced ✓', error: '⚠️ Sync Error' }[s] || '☁️ Sync';
+}
+
+// toolbar button: one tap = sync now; if not connected yet, open settings
+function syncNowOrSetup() {
+  if (syncCfg.token && syncCfg.gistId) cloudPull(true);
+  else openSync();
 }
 
 async function gh(path, opts = {}) {
@@ -1232,6 +1246,8 @@ async function cloudPush() {
       method: 'PATCH',
       body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(fullData()) } } }),
     });
+    syncCfg.lastSyncAt = Date.now();
+    saveSyncCfg();
     setSyncStatus('ok');
   } catch (e) {
     setSyncStatus('error');
@@ -1262,6 +1278,8 @@ async function cloudPull(showMsg) {
         return;
       }
     }
+    syncCfg.lastSyncAt = Date.now();
+    saveSyncCfg();
     setSyncStatus('ok');
   } catch (e) {
     setSyncStatus('error');
@@ -1352,7 +1370,7 @@ document.addEventListener('visibilitychange', () => {
 /* ---------- info pop-ups ---------- */
 const INFO = {
   app: { t: 'About this system', b: 'Track each case through 4 steps: <b>1)</b> you issue the invoice → <b>2)</b> customer pays you → <b>3)</b> supplier passes you cash → <b>4)</b> you pay cash to your client.<br><br>Partial payments are supported at every step. A case closes automatically once the invoice is issued, all three payments are complete, and the referral (if any) is paid.<br><br>Use the period buttons (Today / 7 Days / 1 Month…) to filter the dashboard and case list by date.' },
-  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. Data saves in this browser — turn on ☁️ Sync to share across devices, and Backup regularly for a safety copy.' },
+  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. The ☁️ button syncs now and shows the last sync time — sync settings, Backup, Restore and CSV export are all in ⚙️ Profile.' },
   cash: { t: 'Cash Book', b: 'Shows every cash movement with a running balance: cash IN from suppliers, cash OUT to clients, referral fees, profit withdrawals, and your own money in/out.<br><br>Customer invoice payments are bank transfers, so they are <b>not</b> counted in cash on hand.<br><br>If the balance is negative, that is your own money currently fronted.' },
   profit: { t: 'Profit & Partners', b: 'Total profit comes from <b>closed cases only</b> — a case must be fully collected and paid out before its profit enters the pool.<br><br>Profit splits equally between the 3 partners. Record each withdrawal here; it automatically appears as cash out in the Cash Book.<br><br>Balance Profit = total profit − total withdrawn.' },
 };
@@ -1406,7 +1424,10 @@ function openProfile() {
 
     <div class="leg" style="margin-bottom:12px">
       <h3>☁️ Sync</h3>
-      <div style="font-size:13px;color:var(--muted);margin:6px 0 10px">${connected ? 'ON — this device shares data with your other devices.' : 'OFF — data stays on this device only.'}</div>
+      <div style="font-size:13px;color:var(--muted);margin:6px 0 10px">${connected
+        ? `ON — shares data with your other devices.${syncCfg.lastSyncAt ? ` Last synced: <b>${fmtSyncTime(syncCfg.lastSyncAt)}</b>` : ''}`
+        : 'OFF — data stays on this device only.'}</div>
+      ${connected ? '<button class="btn-primary btn-small" onclick="cloudPull(true)">Sync Now</button> ' : ''}
       <button class="btn-secondary btn-small" onclick="openSync()">Sync Settings</button>
     </div>
 
