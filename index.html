@@ -149,7 +149,7 @@
 <h1>Invoice Tracker</h1>
 <div class="sub">Track each case from invoice issued → customer payment → supplier cash → client payout. Partial payments supported.</div>
 
-<div id="storageWarn">⚠️ This preview window cannot save data permanently — your entries will disappear when you close it. To keep your records, open <b>invoice-tracker.html</b> by double-clicking it in Finder (it opens in Safari/Chrome), or click <b>Backup</b> before closing to download your data.</div>
+<div id="storageWarn">⚠️ This window cannot save data permanently — your entries will disappear when you close it. Open the app in Safari or Chrome instead, or click <b>Backup</b> before closing to download your data.</div>
 
 <div class="cards" id="summaryCards"></div>
 
@@ -162,6 +162,7 @@
     <option value="closed">Closed</option>
   </select>
   <div class="spacer"></div>
+  <button class="btn-secondary" id="syncBtn" onclick="openSync()">☁️ Sync: Off</button>
   <button class="btn-secondary" onclick="openCash()">🪙 Cash Book</button>
   <button class="btn-secondary" onclick="exportCSV()">Export CSV</button>
   <button class="btn-secondary" onclick="exportJSON()">Backup</button>
@@ -173,7 +174,7 @@
 <div class="hint">💡 <b>How to update a case:</b> click the <b>Update</b> button (or anywhere on the row) to open the case — there you tick <b>Invoice Issued</b> and key in every payment received from the customer, cash from the supplier, and cash paid to the client (partial amounts are fine). Use <b>Edit</b> to change the company/amount/%, and <b>Del</b> to delete the case. You can also click the Yes/No under Invoice to flip it directly.</div>
 
 <div id="tableWrap"></div>
-<div class="footer-note">Data is saved automatically in this browser. Use <b>Backup</b> regularly to save a copy of your data as a file, and <b>Restore</b> to load it back.</div>
+<div class="footer-note">Data is saved automatically in this browser. Turn on <b>☁️ Sync</b> to share data across your devices, and use <b>Backup</b> regularly to keep a safety copy as a file.</div>
 
 <!-- Add/Edit case modal -->
 <div class="overlay" id="formOverlay">
@@ -207,12 +208,19 @@
   <div class="modal" id="cashModal"></div>
 </div>
 
+<!-- Sync modal -->
+<div class="overlay" id="syncOverlay">
+  <div class="modal" id="syncModal"></div>
+</div>
+
 <div class="toast-wrap" id="toasts"></div>
 
 <script>
 const STORAGE_KEY = 'invoiceTrackerData_v1';
+const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
 let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
+let updatedAt = 0;      // last local edit time, used to decide which copy is newer
 let editingId = null;
 
 /* ---------- persistence ---------- */
@@ -220,16 +228,21 @@ function load() {
   try {
     const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
     if (Array.isArray(data)) { cases = data; adjustments = []; }      // old format
-    else { cases = data?.cases || []; adjustments = data?.adjustments || []; }
+    else { cases = data?.cases || []; adjustments = data?.adjustments || []; updatedAt = data?.updatedAt || 0; }
   }
   catch (e) { cases = []; adjustments = []; }
   // warn upfront if this environment cannot persist data
   try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
 }
-function save() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cases, adjustments })); }
+function persist() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ cases, adjustments, updatedAt })); }
   catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
+}
+function save() {
+  updatedAt = Date.now();
+  persist();
+  scheduleCloudPush();
 }
 
 function notify(msg, isError) {
@@ -682,6 +695,159 @@ function exportCSV() {
   download(`invoice-tracker-${today()}.csv`, csv, 'text/csv');
 }
 
+/* ---------- cloud sync (private GitHub Gist) ---------- */
+const GIST_FILE = 'invoice-tracker-data.json';
+let syncCfg = {};
+try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { syncCfg = {}; }
+let pushTimer = null;
+let lastPullAt = 0;
+
+function saveSyncCfg() {
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch (e) {}
+}
+
+function setSyncStatus(s) {
+  const b = document.getElementById('syncBtn');
+  if (b) b.textContent = { off: '☁️ Sync: Off', syncing: '⏳ Syncing…', ok: '☁️ Synced ✓', error: '⚠️ Sync Error' }[s] || '☁️ Sync';
+}
+
+async function gh(path, opts = {}) {
+  const res = await fetch('https://api.github.com' + path, {
+    ...opts,
+    headers: { 'Authorization': 'token ' + syncCfg.token, 'Accept': 'application/vnd.github+json', ...(opts.headers || {}) },
+  });
+  if (!res.ok) throw new Error('GitHub ' + res.status);
+  return res.json();
+}
+
+function scheduleCloudPush() {
+  if (!syncCfg.token || !syncCfg.gistId) return;
+  clearTimeout(pushTimer);
+  setSyncStatus('syncing');
+  pushTimer = setTimeout(cloudPush, 1500);   // wait for typing to stop, then push once
+}
+
+async function cloudPush() {
+  if (!syncCfg.token || !syncCfg.gistId) return;
+  try {
+    setSyncStatus('syncing');
+    await gh('/gists/' + syncCfg.gistId, {
+      method: 'PATCH',
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify({ cases, adjustments, updatedAt }) } } }),
+    });
+    setSyncStatus('ok');
+  } catch (e) {
+    setSyncStatus('error');
+    notify('Could not sync to cloud — will retry on your next change.', true);
+  }
+}
+
+async function cloudPull(showMsg) {
+  if (!syncCfg.token || !syncCfg.gistId) return;
+  lastPullAt = Date.now();
+  try {
+    setSyncStatus('syncing');
+    const g = await gh('/gists/' + syncCfg.gistId);
+    const content = g.files?.[GIST_FILE]?.content;
+    if (content) {
+      const data = JSON.parse(content);
+      if ((data.updatedAt || 0) > (updatedAt || 0)) {
+        cases = data.cases || [];
+        adjustments = data.adjustments || [];
+        updatedAt = data.updatedAt || 0;
+        persist(); render();
+        if (showMsg) notify('Loaded newer data from cloud.');
+      } else if ((updatedAt || 0) > (data.updatedAt || 0)) {
+        await cloudPush();
+        return;
+      }
+    }
+    setSyncStatus('ok');
+  } catch (e) {
+    setSyncStatus('error');
+    if (showMsg) notify('Could not reach the cloud — check internet or sync key.', true);
+  }
+}
+
+async function connectSync() {
+  const token = document.getElementById('sync_token').value.trim();
+  if (!token) { notify('Please paste your sync key first.', true); return; }
+  syncCfg = { token };
+  try {
+    setSyncStatus('syncing');
+    // reuse this account's existing data gist if there is one, otherwise create it
+    let gistId = null;
+    const gists = await gh('/gists?per_page=100');
+    for (const g of gists) if (g.files && g.files[GIST_FILE]) { gistId = g.id; break; }
+    if (!gistId) {
+      const g = await gh('/gists', {
+        method: 'POST',
+        body: JSON.stringify({ description: 'Invoice Tracker data (private)', public: false,
+          files: { [GIST_FILE]: { content: JSON.stringify({ cases, adjustments, updatedAt }) } } }),
+      });
+      gistId = g.id;
+    }
+    syncCfg.gistId = gistId;
+    saveSyncCfg();
+    await cloudPull(true);
+    notify('Sync connected ✓ This device now shares data with your other devices.');
+    openSync();
+  } catch (e) {
+    syncCfg = {};
+    saveSyncCfg();
+    setSyncStatus('off');
+    notify('Could not connect — please check the sync key and try again.', true);
+  }
+}
+
+function disconnectSync() {
+  syncCfg = {};
+  saveSyncCfg();
+  setSyncStatus('off');
+  notify('Sync turned off. Data stays on this device only.');
+  openSync();
+}
+
+function openSync() {
+  const connected = !!(syncCfg.token && syncCfg.gistId);
+  document.getElementById('syncModal').innerHTML = connected ? `
+    <h2>☁️ Sync is ON</h2>
+    <div style="font-size:14px;line-height:1.6">
+      <p>This device shares data with every other device connected with the same sync key.
+      Changes upload automatically a moment after you make them, and the app checks for
+      newer data every time you open or return to it.</p>
+      <p style="margin-top:10px;color:var(--muted);font-size:13px">Your data lives in a <b>private</b> file on your own GitHub account — only someone with your sync key can see it.
+      Tip: key in on one device at a time; if two devices are edited at the same time while offline, the most recent change wins.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-danger" onclick="disconnectSync()">Turn Off Sync</button>
+      <button class="btn-secondary" onclick="cloudPull(true)">Sync Now</button>
+      <button class="btn-primary" onclick="closeOverlay('syncOverlay')">Done</button>
+    </div>` : `
+    <h2>☁️ Turn On Sync</h2>
+    <div style="font-size:14px;line-height:1.7">
+      <p>Sync lets you see the same data on your Mac, phone, and office computer. It uses a private file on your own GitHub account — free, and only you can read it.</p>
+      <p style="margin-top:12px"><b>Step 1 — Get your sync key (one time):</b><br>
+      <a href="https://github.com/settings/tokens/new?scopes=gist&description=Invoice+Tracker+Sync" target="_blank" rel="noopener" style="color:var(--blue);font-weight:600">Click here to open GitHub</a>
+      — log in if asked, scroll to the bottom, press the green <b>Generate token</b> button, then copy the code that starts with <b>ghp_</b>. (Set Expiration to "No expiration" so you don't have to redo this.)</p>
+      <p style="margin-top:12px"><b>Step 2 — Paste it here:</b></p>
+      <div class="txn-form" style="margin-top:6px">
+        <input type="password" id="sync_token" class="note" placeholder="Paste sync key (ghp_…)" autocomplete="off">
+        <button class="btn-primary" onclick="connectSync()">Connect</button>
+      </div>
+      <p style="margin-top:12px;color:var(--muted);font-size:13px">Do the same on each device (same key). Keep the key private — anyone who has it can read your records. The key is stored only on this device.</p>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOverlay('syncOverlay')">Cancel</button>
+    </div>`;
+  document.getElementById('syncOverlay').classList.add('show');
+}
+
+// pull fresh data when you come back to the app (e.g. switching from phone to Mac)
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && syncCfg.gistId && Date.now() - lastPullAt > 30000) cloudPull();
+});
+
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) o.classList.remove('show'); }));
@@ -689,6 +855,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') document.que
 
 load();
 render();
+if (syncCfg.token && syncCfg.gistId) { setSyncStatus('syncing'); cloudPull(); }
+else setSyncStatus('off');
 </script>
 </body>
 </html>
