@@ -149,7 +149,8 @@
   .fig .value { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
   .legs { display: grid; grid-template-columns: 1fr; gap: 14px; }
-  .leg { border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+  .leg { border: 1px solid var(--border); border-radius: 10px; padding: 14px; overflow-x: auto; }
+  .leg td.num, .leg th.num { white-space: nowrap; }
   .leg h3 { font-size: 14px; margin-bottom: 2px; }
   .leg .target { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
   .leg table { border: none; background: rgba(255,255,255,0.65); }
@@ -224,6 +225,10 @@
     .chip { padding: 7px 2px; font-size: 11.5px; }
     /* Profile lives in the bottom tab bar on mobile; Back is desktop-only */
     #profileBtn, .page-back { display: none; }
+    /* tables inside cards: compact so they fit the phone width */
+    .leg { padding: 12px 10px; }
+    .leg td, .leg th { padding: 5px 4px; font-size: 12px; }
+    .leg input, .leg select { font-size: 13px; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
     .overlay { padding: 22px 12px 110px; }
     .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
@@ -336,7 +341,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.10.0 (12 Jun 2026)';
+const APP_VERSION = '1.10.1 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -1055,7 +1060,7 @@ function profitHTML() {
     const taken = sum(withdrawals.filter(w => w.partner === p));
     const bal = share - taken;
     return `<tr>
-      <td><input type="text" id="p_name_${i}" value="${esc(p)}" style="border:1px solid var(--border);border-radius:6px;padding:5px 8px;width:140px"></td>
+      <td><input type="text" id="p_name_${i}" value="${esc(p)}" style="border:1px solid var(--border);border-radius:6px;padding:5px 8px;width:110px;max-width:26vw;min-width:64px"></td>
       <td class="num">${fmt(share)}</td>
       <td class="num">${fmt(taken)}</td>
       <td class="num" style="color:${bal < -TOL ? 'var(--red)' : 'var(--green)'}"><b>${fmt(bal)}</b></td>
@@ -1078,7 +1083,7 @@ function profitHTML() {
 
     <div class="leg">
       <h3 style="margin-bottom:8px">Partner balances (equal 3-way split of total profit) <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
-      <table><thead><tr><th>Partner</th><th class="num">Share of Profit</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
+      <table><thead><tr><th>Partner</th><th class="num">Share</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
       <tbody>${partnerRows}</tbody></table>
       <div style="margin-top:8px"><button class="btn-secondary btn-small" onclick="savePartners()">Save Partner Names</button></div>
     </div>
