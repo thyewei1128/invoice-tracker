@@ -227,7 +227,8 @@
     #profileBtn, .page-back { display: none; }
     /* tables inside cards: compact so they fit the phone width */
     .leg { padding: 12px 10px; }
-    .leg td, .leg th { padding: 5px 4px; font-size: 12px; }
+    .leg td, .leg th { padding: 5px 3px; font-size: 12px; }
+    .leg td.num { font-size: 11px; }
     .leg input, .leg select { font-size: 13px; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
     .overlay { padding: 22px 12px 110px; }
@@ -341,7 +342,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.10.2 (12 Jun 2026)';
+const APP_VERSION = '1.10.3 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -390,7 +391,12 @@ function notify(msg, isError) {
 
 /* ---------- helpers ---------- */
 const fmt = n => 'RM ' + (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const fmtN = n => (Number(n) || 0).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });   // no RM prefix, for tight tables
+// no RM prefix, for tight tables; from 1M up the cents are hidden so big figures still fit
+const fmtN = n => {
+  const v = Number(n) || 0;
+  const dp = Math.abs(v) >= 1000000 ? 0 : 2;
+  return v.toLocaleString('en-MY', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+};
 const pct = n => (Number(n) || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 }) + '%';
 const today = () => new Date().toISOString().slice(0, 10);
 const fmtDate = s => { if (!s) return ''; const [y, m, d] = String(s).split('-'); return (y && m && d) ? `${d}/${m}/${y}` : esc(s); };
