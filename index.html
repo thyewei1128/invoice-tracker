@@ -51,13 +51,23 @@
   .chip.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   #customRange input { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
 
-  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
   .card .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
   .card .value { font-size: 20px; font-weight: 700; }
   .card .value.green { color: var(--green); }
   .card .value.red { color: var(--red); }
   .card .value.amber { color: var(--amber); }
+  .card.feature { grid-column: span 2; background: linear-gradient(135deg, #1F4D63, #0E2A35); border: none; box-shadow: 0 10px 26px -10px rgba(20,57,71,0.55); }
+  .card.feature .label { color: var(--tan-2); text-transform: uppercase; letter-spacing: 0.1em; font-size: 11px; font-weight: 700; }
+  .card.feature .value { font-size: 26px; color: #fff; }
+  .card.feature .value.green { color: #9FD8B9; }
+  .card.feature .value.red { color: #F4A9A9; }
+  .card.feature div[style] { color: #8FA6B2 !important; }
+  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; margin-bottom: 20px; }
+  .chart-card h3 { font-size: 14px; color: var(--accent); margin-bottom: 2px; }
+  .chart-card .chart-sub { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .chart-card svg { width: 100%; height: auto; display: block; }
 
   .toolbar { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
   .toolbar input[type=text], .toolbar select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
@@ -181,7 +191,7 @@
     .bn-fab-label { font-size: 10px; color: var(--tan); font-weight: 700; }
     /* tab views: Dashboard shows cards, Cases shows the list */
     body.m-home .toolbar, body.m-home .hint, body.m-home #tableWrap, body.m-home .footer-note { display: none; }
-    body.m-cases .cards { display: none; }
+    body.m-cases .cards, body.m-cases .chart-card { display: none; }
     h1 { font-size: 19px; }
     .cards { grid-template-columns: repeat(2, 1fr); gap: 8px; }
     .card { padding: 10px 12px; }
@@ -221,6 +231,7 @@
 <div id="storageWarn">⚠️ This window cannot save data permanently — your entries will disappear when you close it. Open the app in Safari or Chrome instead, or click <b>Backup</b> before closing to download your data.</div>
 
 <div class="cards" id="summaryCards"></div>
+<div class="chart-card" id="chartCard"></div>
 
 <div class="toolbar">
   <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
@@ -457,23 +468,70 @@ function renderSummary(list, rangeOn) {
 
   const cash = cashOnHand();
   document.getElementById('summaryCards').innerHTML = `
-    <div class="card" style="cursor:pointer; border-color: var(--accent)" onclick="openCash()">
-      <div class="label">Cash on Hand 🪙</div>
+    <div class="card feature" style="cursor:pointer" onclick="openCash()">
+      <div class="label">🪙 Cash on Hand</div>
       <div class="value ${cash < 0 ? 'red' : 'green'}">${fmt(cash)}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">click for cash book</div>
+      <div style="font-size:11px;margin-top:4px">tap for cash book</div>
     </div>
-    <div class="card" style="cursor:pointer; border-color: var(--green)" onclick="openProfit()">
-      <div class="label">Balance Profit 🤝</div>
+    <div class="card feature" style="cursor:pointer" onclick="openProfit()">
+      <div class="label">🤝 Balance Profit</div>
       <div class="value ${balanceProfit < 0 ? 'red' : 'green'}">${fmt(balanceProfit)}</div>
-      <div style="font-size:11px;color:var(--muted);margin-top:4px">click for partners &amp; withdrawals</div>
+      <div style="font-size:11px;margin-top:4px">tap for partners &amp; withdrawals</div>
     </div>
     <div class="card"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
     <div class="card"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
     <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
     <div class="card"><div class="label">Owed by Suppliers${tag}</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
-    <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>
     <div class="card"><div class="label">Profit (Closed)${tag}</div><div class="value green">${fmt(realized)}</div></div>
-    <div class="card"><div class="label">Profit (Pending)${tag}</div><div class="value">${fmt(pending)}</div></div>`;
+    <div class="card"><div class="label">Profit (Pending)${tag}</div><div class="value">${fmt(pending)}</div></div>
+    <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>`;
+
+  renderChart();
+}
+
+/* ---------- monthly profit chart (self-drawn SVG, works offline) ---------- */
+const fmtShort = n => Math.abs(n) >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(Math.round(n));
+
+function renderChart() {
+  const now = new Date();
+  const months = [];
+  for (let i = 5; i >= 0; i--) {
+    const m = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    months.push({
+      key: `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, '0')}`,
+      label: m.toLocaleString('en', { month: 'short' }),
+    });
+  }
+  const closedAll = cases.filter(c => computed(c).closed);
+  const vals = months.map(mo => closedAll.filter(c => (c.date || '').startsWith(mo.key)).reduce((a, c) => a + computed(c).profitAmount, 0));
+  const box = document.getElementById('chartCard');
+
+  if (vals.every(v => v <= 0)) {
+    box.innerHTML = `<h3>📊 Monthly Profit</h3><div class="chart-sub">The chart appears here once cases start closing.</div>`;
+    return;
+  }
+
+  const W = 600, barW = 64, pad = 16, baseY = 168, maxH = 118;
+  const gap = (W - 2 * pad - 6 * barW) / 5;
+  const max = Math.max(...vals);
+  const bars = months.map((mo, i) => {
+    const v = vals[i];
+    const h = max > 0 ? Math.round(v / max * maxH) : 0;
+    const x = pad + i * (barW + gap);
+    const isCurrent = i === 5;
+    return `
+      <rect x="${x}" y="${baseY - h}" width="${barW}" height="${Math.max(h, 2)}" rx="8" fill="${isCurrent ? '#D4B190' : '#1F4D63'}"/>
+      <text x="${x + barW / 2}" y="${baseY - h - 8}" text-anchor="middle" font-size="15" font-weight="700" fill="#143947">${v > 0 ? fmtShort(v) : ''}</text>
+      <text x="${x + barW / 2}" y="${baseY + 24}" text-anchor="middle" font-size="14" fill="#6B7884">${mo.label}</text>`;
+  }).join('');
+
+  box.innerHTML = `
+    <h3>📊 Monthly Profit</h3>
+    <div class="chart-sub">Profit from closed cases · last 6 months · RM</div>
+    <svg viewBox="0 0 ${W} 200" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Monthly profit bar chart">
+      <line x1="${pad}" y1="${baseY}" x2="${W - pad}" y2="${baseY}" stroke="#E4DDD0" stroke-width="2"/>
+      ${bars}
+    </svg>`;
 }
 
 /* ---------- table ---------- */
