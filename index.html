@@ -179,6 +179,14 @@
   .toast.error { background: var(--red); }
   #storageWarn { display: none; background: var(--red-soft); color: var(--red); border-radius: 10px; padding: 10px 14px; font-size: 13px; margin-bottom: 12px; font-weight: 600; }
 
+  /* Finance & Profile are in-page views, not pop-ups */
+  .page-section { display: none; }
+  body.m-finance #financePage, body.m-profile #profilePage { display: block; }
+  body.m-finance .cards, body.m-finance .chart-card, body.m-finance .toolbar, body.m-finance #tableWrap, body.m-finance .period-bar,
+  body.m-profile .cards, body.m-profile .chart-card, body.m-profile .toolbar, body.m-profile #tableWrap, body.m-profile .period-bar { display: none; }
+  .page-section .card { padding: 18px; }
+  .page-section h2 { font-size: 18px; color: var(--accent); margin-bottom: 14px; }
+
   /* Bottom app navigation (mobile only) */
   .bottomnav { display: none; }
 
@@ -267,6 +275,9 @@
 
 <div id="tableWrap"></div>
 
+<div id="financePage" class="page-section"></div>
+<div id="profilePage" class="page-section"></div>
+
 <!-- Add/Edit case modal -->
 <div class="overlay" id="formOverlay">
   <div class="modal">
@@ -310,16 +321,6 @@
   <div class="modal" id="profitModal"></div>
 </div>
 
-<!-- Finance chooser modal -->
-<div class="overlay" id="financeOverlay">
-  <div class="modal" id="financeModal"></div>
-</div>
-
-<!-- Profile modal -->
-<div class="overlay" id="profileOverlay">
-  <div class="modal" id="profileModal"></div>
-</div>
-
 <!-- Info modal -->
 <div class="overlay" id="infoOverlay">
   <div class="modal" id="infoModal" style="max-width:520px"></div>
@@ -336,12 +337,12 @@
     <button class="bn-fab" onclick="openCaseForm()">＋</button>
     <span class="bn-fab-label">NEW CASE</span>
   </div>
-  <button class="bn-item" onclick="openFinance()"><span class="bn-ico">💼</span><span>Finance</span></button>
-  <button class="bn-item" onclick="openProfile()"><span class="bn-ico">👤</span><span>Profile</span></button>
+  <button class="bn-item" id="bn-finance" onclick="openFinance()"><span class="bn-ico">💼</span><span>Finance</span></button>
+  <button class="bn-item" id="bn-profile" onclick="openProfile()"><span class="bn-ico">👤</span><span>Profile</span></button>
 </nav>
 
 <script>
-const APP_VERSION = '1.8.1 (12 Jun 2026)';
+const APP_VERSION = '1.9.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -472,7 +473,7 @@ function cashMovements() {
     for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
     if (c.referralPaid && x.referralAmount > TOL) moves.push({ date: c.referralPaidDate || c.date, amount: -x.referralAmount, label: `Referral fee — ${c.company}${c.referralName ? ' (' + c.referralName + ')' : ''}`, note: '' });
   }
-  for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.type === 'in' ? 'Own money in' : 'Cash taken out', note: a.note || '', adjId: a.id });
+  for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.type === 'in' ? 'Cash in' : 'Cash out', note: a.note || '', adjId: a.id });
   for (const w of withdrawals) moves.push({ date: w.date, amount: -(Number(w.amount) || 0), label: `Profit withdrawal — ${w.partner}`, note: w.note || '' });
   moves.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   return moves;
@@ -996,15 +997,15 @@ function openCash() {
       </div>
       <span class="badge ${cash < 0 ? 'none' : 'full'}" style="font-size:15px;padding:8px 16px">Cash on Hand: ${fmt(cash)}</span>
     </div>
-    ${cash < 0 ? `<div style="margin-top:10px;background:var(--red-soft);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px">You have paid out ${fmt(-cash)} more than the cash recorded coming in — that is your own money currently fronted. Record it with "Own money in" below if you put in capital.</div>` : ''}
+    ${cash < 0 ? `<div style="margin-top:10px;background:var(--red-soft);color:var(--red);border-radius:8px;padding:10px 14px;font-size:13px">You have paid out ${fmt(-cash)} more than the cash recorded coming in — that is your own money currently fronted. Record it with "Cash In" below if you put in capital.</div>` : ''}
 
     <div class="leg" style="margin-top:16px">
-      <h3>Add own money in / take cash out</h3>
+      <h3>Add Cash In / Cash Out</h3>
       <div class="txn-form" style="margin-top:8px">
         <input type="date" id="adj_date" value="${today()}">
         <select id="adj_type" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
-          <option value="in">Own money IN</option>
-          <option value="out">Take cash OUT</option>
+          <option value="in">Cash In</option>
+          <option value="out">Cash Out</option>
         </select>
         <input type="number" class="amt" id="adj_amount" placeholder="Amount (RM)" step="0.01" min="0">
         <input type="text" class="note" id="adj_note" placeholder="Note (e.g. topped up capital)">
@@ -1244,7 +1245,7 @@ const fmtSyncTime = ts => {
   if (!ts) return '';
   const d = new Date(ts);
   const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${hm}`;
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(2)} ${hm}`;
 };
 
 function setSyncStatus(s) {
@@ -1347,6 +1348,7 @@ async function connectSync() {
     saveSyncCfg();
     await cloudPull(true);
     notify('Sync connected ✓ This device now shares data with your other devices.');
+    renderProfile();
     openSync();
   } catch (e) {
     syncCfg = {};
@@ -1361,6 +1363,7 @@ function disconnectSync() {
   saveSyncCfg();
   setSyncStatus('off');
   notify('Sync turned off. Data stays on this device only.');
+  renderProfile();
   openSync();
 }
 
@@ -1434,30 +1437,33 @@ document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
 });
 
-/* ---------- finance & profile tabs ---------- */
-function openFinance() {
-  closeAllOverlays();
+/* ---------- finance & profile pages ---------- */
+function openFinance() { mobileGo('finance'); }
+function openProfile() { mobileGo('profile'); }
+
+function renderFinance() {
   const cash = cashOnHand();
   const balance = realizedProfitAll() - withdrawnAll();
-  document.getElementById('financeModal').innerHTML = `
-    <button class="modal-x" onclick="closeOverlay('financeOverlay')">✕</button>
+  document.getElementById('financePage').innerHTML = `
+    <div class="card">
+    <button class="btn-secondary btn-small" style="float:right" onclick="mobileGo('home')">← Back</button>
     <h2>💼 Finance</h2>
     <div class="figures">
       <div class="fig"><div class="label">Cash on Hand</div><div class="value" style="color:${cash < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(cash)}</div></div>
       <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
     </div>
     <div style="display:grid; gap:10px">
-      <button class="btn-primary" style="justify-content:flex-start" onclick="openCash()">🪙 Cash Book — every cash in &amp; out</button>
-      <button class="btn-primary" style="justify-content:flex-start" onclick="openProfit()">🤝 Profit &amp; Partners — split &amp; withdrawals</button>
+      <button class="btn-primary" style="justify-content:flex-start" onclick="openCash()">🪙 Cash Book — Cash In / Cash Out</button>
+      <button class="btn-primary" style="justify-content:flex-start" onclick="openProfit()">🤝 Profit Withdrawal</button>
+    </div>
     </div>`;
-  document.getElementById('financeOverlay').classList.add('show');
 }
 
-function openProfile() {
-  closeAllOverlays();
+function renderProfile() {
   const connected = !!(syncCfg.token && syncCfg.gistId);
-  document.getElementById('profileModal').innerHTML = `
-    <button class="modal-x" onclick="closeOverlay('profileOverlay')">✕</button>
+  document.getElementById('profilePage').innerHTML = `
+    <div class="card">
+    <button class="btn-secondary btn-small" style="float:right" onclick="mobileGo('home')">← Back</button>
     <h2>👤 Profile</h2>
 
     <div class="leg" style="margin-bottom:12px">
@@ -1496,8 +1502,8 @@ function openProfile() {
       <h3>ℹ️ About</h3>
       <div style="font-size:13px;line-height:1.7;margin-top:6px">${INFO.app.b}</div>
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">Invoice Tracker · DLS Technology · Version ${APP_VERSION}</div>
+    </div>
     </div>`;
-  document.getElementById('profileOverlay').classList.add('show');
 }
 
 async function changeEditPass() {
@@ -1511,16 +1517,22 @@ async function changeEditPass() {
   editUnlocked = false;
   save();
   notify('Edit password updated ✓');
-  openProfile();
+  renderProfile();
 }
 
-/* ---------- mobile tab navigation ---------- */
+/* ---------- page navigation (remembers where you are) ---------- */
+const VIEWS = ['home', 'cases', 'finance', 'profile'];
 function mobileGo(v) {
+  if (!VIEWS.includes(v)) v = 'home';
   closeAllOverlays();
-  document.body.classList.toggle('m-home', v === 'home');
-  document.body.classList.toggle('m-cases', v === 'cases');
-  document.getElementById('bn-home').classList.toggle('active', v === 'home');
-  document.getElementById('bn-cases').classList.toggle('active', v === 'cases');
+  VIEWS.forEach(k => {
+    document.body.classList.toggle('m-' + k, v === k);
+    const b = document.getElementById('bn-' + k);
+    if (b) b.classList.toggle('active', v === k);
+  });
+  if (v === 'finance') renderFinance();
+  if (v === 'profile') renderProfile();
+  try { localStorage.setItem('invTrackView', v); } catch (e) {}
   window.scrollTo({ top: 0 });
 }
 
@@ -1543,6 +1555,9 @@ document.addEventListener('touchend', () => {
 
 load();
 render();
+let savedView = 'home';
+try { savedView = localStorage.getItem('invTrackView') || 'home'; } catch (e) {}
+mobileGo(savedView);
 if (syncCfg.token && syncCfg.gistId) { setSyncStatus('syncing'); cloudPull(); }
 else setSyncStatus('off');
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
