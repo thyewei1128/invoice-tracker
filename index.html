@@ -96,6 +96,9 @@
   th { background: var(--accent-soft); text-align: left; font-size: 12px; text-transform: uppercase; letter-spacing: 0.03em; padding: 10px 12px; color: var(--accent); white-space: nowrap; }
   th.sortable { cursor: pointer; user-select: none; }
   th.sortable:hover { background: var(--tan-2); }
+  tr.total-row td { background: var(--accent-soft); font-weight: 700; border-top: 2px solid var(--tan-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.total-row .tot-sub { font-size: 11px; color: var(--muted); font-weight: 500; }
+  tr.total-row td.actions-col { background: var(--accent-soft); }
   .pager { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
   .pager select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; background: var(--card); }
   button:disabled { opacity: 0.4; cursor: default; }
@@ -333,7 +336,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.7.1 (12 Jun 2026)';
+const APP_VERSION = '1.8.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -554,6 +557,30 @@ function renderChart() {
     </svg>`;
 }
 
+/* ---------- table totals ---------- */
+function sumUp(arr) {
+  return arr.reduce((a, { x }) => ({
+    amount: a.amount + x.amount,
+    recvC: a.recvC + x.recvCustomer, expC: a.expC + x.expectedCustomer,
+    recvS: a.recvS + x.recvSupplier, expS: a.expS + x.expectedSupplier,
+    paid: a.paid + x.paidClient, expP: a.expP + x.expectedPayout,
+    profit: a.profit + x.profitAmount,
+  }), { amount: 0, recvC: 0, expC: 0, recvS: 0, expS: 0, paid: 0, expP: 0, profit: 0 });
+}
+
+function totalRow(label, t, n) {
+  return `<tr class="total-row">
+    <td colspan="3">${label} · ${n} case${n === 1 ? '' : 's'}</td>
+    <td class="num">${fmt(t.amount)}</td>
+    <td></td>
+    <td class="num">${fmt(t.recvC)}<div class="tot-sub">of ${fmt(t.expC)}</div></td>
+    <td class="num">${fmt(t.recvS)}<div class="tot-sub">of ${fmt(t.expS)}</div></td>
+    <td class="num">${fmt(t.paid)}<div class="tot-sub">of ${fmt(t.expP)}</div></td>
+    <td class="num">${fmt(t.profit)}</td>
+    <td></td><td class="actions-col"></td>
+  </tr>`;
+}
+
 /* ---------- table ---------- */
 function legBadge(status, got, target) {
   const labels = { full: 'Full', partial: 'Partial', none: 'No' };
@@ -654,6 +681,10 @@ function render() {
         </td>
       </tr>`).join('')}
     </tbody>
+    <tfoot>
+      ${pages > 1 ? totalRow('This Page', sumUp(pageList), pageList.length) : ''}
+      ${totalRow('Grand Total', sumUp(list), total)}
+    </tfoot>
   </table>
   <div class="pager">
     <span>Showing ${start + 1}–${Math.min(start + perPage, total)} of ${total} cases</span>
