@@ -298,6 +298,7 @@
     <option value="">All status</option>
     <option value="open">Open</option>
     <option value="closed">Closed</option>
+    <option value="cancelled">Cancelled</option>
   </select>
   <select id="filterUser" onchange="onFilterChange()" style="display:none"><option value="">All Users</option></select>
   <button class="btn-secondary" id="profileBtn" onclick="openProfile()">⚙️ Profile</button>
@@ -402,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.5.0 (12 Jun 2026)';
+const APP_VERSION = '2.6.0 (12 Jun 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -459,7 +460,8 @@ const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic:
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
-  createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null });
+  createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
+  cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null });
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
@@ -829,6 +831,7 @@ function computed(c) {
 function cashMovements() {
   const moves = [];
   for (const c of cases) {
+    if (c.cancelledAt) continue;   // cancelled cases never count
     const x = computed(c);
     for (const t of c.supplierPayments || []) moves.push({ date: t.date, amount: +t.amount, label: `Cash in from supplier — ${c.company}`, note: t.note || '' });
     for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
@@ -842,7 +845,7 @@ function cashMovements() {
 const cashOnHand = () => cashMovements().reduce((a, m) => a + m.amount, 0);
 
 /* ---------- summary ---------- */
-const realizedProfitAll = () => cases.filter(c => computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
+const realizedProfitAll = () => cases.filter(c => !c.cancelledAt && computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
 const withdrawnAll = () => sum(withdrawals);
 
 function renderSummary(list, rangeOn) {
@@ -917,7 +920,7 @@ function legBadge(status, got, target) {
 function render() {
   const range = getRange();
   const dateFiltered = range ? cases.filter(c => inRange(c.date, range)) : cases;
-  renderSummary(dateFiltered, !!range);
+  renderSummary(dateFiltered.filter(c => !c.cancelledAt), !!range);   // cancelled cases never count
   // PIC filter options
   const picSel = document.getElementById('filterPic');
   const currentPic = picSel.value;
@@ -931,7 +934,8 @@ function render() {
   let list = dateFiltered.map(c => ({ c, x: computed(c) }));
   if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
   if (fPic) list = list.filter(r => r.c.pic === fPic);
-  if (fStatus) list = list.filter(r => fStatus === 'closed' ? r.x.closed : !r.x.closed);
+  if (fStatus) list = list.filter(r => fStatus === 'cancelled' ? !!r.c.cancelledAt
+    : (fStatus === 'closed' ? (r.x.closed && !r.c.cancelledAt) : (!r.x.closed && !r.c.cancelledAt)));
   const fUser = document.getElementById('filterUser').value;
   if (fUser) list = list.filter(r => r.c.createdBy === fUser || r.c.updatedBy === fUser);
 
@@ -947,7 +951,7 @@ function render() {
       case 'supplier': return x.expectedSupplier > 0 ? x.recvSupplier / x.expectedSupplier : 1;
       case 'payout': return x.expectedPayout > 0 ? x.paidClient / x.expectedPayout : 1;
       case 'profit': return x.profitAmount;
-      case 'status': return x.closed ? 1 : 0;
+      case 'status': return c.cancelledAt ? 2 : (x.closed ? 1 : 0);
       default: return 0;
     }
   };
@@ -985,7 +989,7 @@ function render() {
     </tr></thead>
     <tbody>
     ${pageList.map(({ c, x }) => `
-      <tr class="row" onclick="openDetail('${c.id}')">
+      <tr class="row" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
         <td>${fmtDate(c.date)}</td>
         <td><b>${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
@@ -997,17 +1001,19 @@ function render() {
         <td>${legBadge(x.sSupplier, x.recvSupplier, x.expectedSupplier)}</td>
         <td>${legBadge(x.sPayout, x.paidClient, x.expectedPayout)}</td>
         <td class="num"><b>${fmt(x.profitAmount)}</b><div style="font-size:11px;color:var(--muted)">${pct(x.profitPct)}</div></td>
-        <td>${x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>'}</td>
+        <td>${c.cancelledAt ? '<span class="badge none">Cancelled</span>' : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>')}</td>
         <td class="actions-col" onclick="event.stopPropagation()">
-          <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">Update</button>
-          <button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button>
-          <button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>
+          <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${c.cancelledAt ? 'View' : 'Update'}</button>
+          ${c.cancelledAt
+            ? (userRole === 'owner' ? `<button class="btn-secondary btn-small" onclick="restoreCase('${c.id}')">↩️ Restore</button>` : '')
+            : `<button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button><button class="btn-danger btn-small" ${pendingCancel === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="cancelCase('${c.id}')">${pendingCancel === c.id ? 'Confirm?' : 'Cancel'}</button>`}
+          ${userRole === 'owner' ? `<button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>` : ''}
         </td>
       </tr>`).join('')}
     </tbody>
     <tfoot>
-      ${pages > 1 ? totalRow('This Page', sumUp(pageList), pageList.length) : ''}
-      ${totalRow('Grand Total', sumUp(list), total)}
+      ${pages > 1 ? totalRow('This Page', sumUp(pageList.filter(r => !r.c.cancelledAt)), pageList.filter(r => !r.c.cancelledAt).length) : ''}
+      ${totalRow('Grand Total', sumUp(list.filter(r => !r.c.cancelledAt)), list.filter(r => !r.c.cancelledAt).length)}
     </tfoot>
   </table>
   <div class="pager">
@@ -1057,6 +1063,7 @@ function agentSelectChanged() {
 function openCaseForm(id) {
   if (!guardActive()) return;
   const c = id ? cases.find(c => c.id === id) : null;
+  if (c && c.cancelledAt) { notify('🚫 Cancelled case — view only. The owner can restore it first.', true); return; }
   if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   closeAllOverlays();
   editingId = id || null;
@@ -1152,9 +1159,50 @@ async function saveCaseForm() {
   notify(wasEditing ? 'Case updated ✓' : 'Case added — click Update on the row to key in payments.');
 }
 
+/* cancel = keep for viewing, excluded from all figures, restorable by the owner; logged in the audit trail */
+let pendingCancel = null;
+async function cancelCase(id) {
+  if (!guardActive()) return;
+  const c = cases.find(c => c.id === id);
+  if (!c || c.cancelledAt) return;
+  if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  if (pendingCancel !== id) {
+    pendingCancel = id;
+    render();
+    notify('Click "Confirm?" again to cancel. The case stays viewable and the owner can restore it.', true);
+    setTimeout(() => { if (pendingCancel === id) { pendingCancel = null; render(); } }, 5000);
+    return;
+  }
+  pendingCancel = null;
+  const patch = { cancelled_at: new Date().toISOString(), cancelled_by: session?.user?.id || null,
+    updated_at: new Date().toISOString(), updated_by: session?.user?.id || null };
+  try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(patch) }); }
+  catch (e) { saveFail(e); render(); return; }
+  c.cancelledAt = patch.cancelled_at; c.cancelledBy = patch.cancelled_by;
+  c.updatedAt = patch.updated_at; c.updatedBy = patch.updated_by;
+  render();
+  notify('Case cancelled — kept for viewing, no longer counted ✓');
+}
+
+async function restoreCase(id) {
+  if (!guardActive()) return;
+  if (userRole !== 'owner') { notify('Owner access only.', true); return; }
+  const c = cases.find(c => c.id === id);
+  if (!c) return;
+  try {
+    await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({
+      cancelled_at: null, cancelled_by: null, updated_at: new Date().toISOString(), updated_by: session?.user?.id || null }) });
+  } catch (e) { saveFail(e); return; }
+  c.cancelledAt = null; c.cancelledBy = null;
+  render();
+  if (detailId === id) renderDetail();
+  notify('Case restored ✓ It counts in the figures again.');
+}
+
 let pendingDelete = null;
 async function deleteCase(id) {
   if (!guardActive()) return;
+  if (userRole !== 'owner') { notify('Only the owner can permanently delete — use Cancel instead.', true); return; }
   const c0 = cases.find(c => c.id === id);
   if (c0 && computed(c0).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   if (pendingDelete !== id) {
@@ -1191,7 +1239,8 @@ function renderDetail() {
   const c = detailDraft;
   if (!c) return;
   const saved = cases.find(s => s.id === detailId);
-  const locked = !!saved && computed(saved).closed && !editUnlocked;
+  const isCanc = !!(saved && saved.cancelledAt);
+  const locked = !!saved && (isCanc || (computed(saved).closed && !editUnlocked));
   const x = computed(c);
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
@@ -1235,12 +1284,15 @@ function renderDetail() {
       <div class="fig"><div class="label">Profit</div><div class="value" style="color:var(--green)">${fmt(x.profitAmount)} (${pct(x.profitPct)})</div></div>
     </div>
 
-    ${locked ? `<div style="background:var(--amber-soft);color:var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🔒 This case is CLOSED and locked — view only.
+    ${locked ? (isCanc ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🚫 This case is CANCELLED — view only, not counted in any figures.
+      ${saved.cancelledBy || saved.cancelledAt ? `<div style="margin-top:4px;font-weight:500">Cancelled by <b>${esc(userMap[saved.cancelledBy] || '—')}</b>${saved.cancelledAt ? ' · ' + fmtDT(new Date(saved.cancelledAt).getTime()) : ''}</div>` : ''}
+      ${userRole === 'owner' ? `<div style="margin-top:8px"><button class="btn-primary btn-small" onclick="restoreCase('${detailId}')">↩️ Restore Case</button></div>` : ''}
+    </div>` : `<div style="background:var(--amber-soft);color:var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🔒 This case is CLOSED and locked — view only.
       <div class="txn-form" style="margin-top:8px">
         <input type="password" class="note" id="det_pass" placeholder="Enter your login password to unlock" autocomplete="current-password">
         <button class="btn-primary btn-small" onclick="unlockDetail()">Unlock</button>
       </div>
-    </div>` : ''}
+    </div>`) : ''}
 
     <div class="toggles">
       <label><input type="checkbox" ${c.invoiceIssued ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="draftToggle('invoiceIssued',this.checked)"> Invoice Issued</label>
@@ -1304,6 +1356,7 @@ function draftToggle(key, val) {
 async function toggleInvoice(id) {
   if (!guardActive()) return;
   const c = cases.find(c => c.id === id);
+  if (c.cancelledAt) { notify('🚫 Cancelled case — view only.', true); return; }
   if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ invoice_issued: !c.invoiceIssued, updated_at: new Date().toISOString() }) }); }
   catch (e) { saveFail(e); return; }
@@ -1382,8 +1435,8 @@ function profitHTML() {
   const realized = realizedProfitAll();
   const withdrawn = withdrawnAll();
   const balance = realized - withdrawn;
-  const pending = cases.filter(c => !computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
-  const periodProfit = cases.filter(c => computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).profitAmount, 0);
+  const pending = cases.filter(c => !c.cancelledAt && !computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
+  const periodProfit = cases.filter(c => !c.cancelledAt && computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).profitAmount, 0);
 
   const partnerRows = partners.map((p, i) => {
     const share = realized / 3;
