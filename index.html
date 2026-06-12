@@ -265,7 +265,7 @@
       <h1>Invoice Tracker</h1>
     </div>
   </div>
-  <button class="btn-secondary" id="syncBtn" onclick="refreshData(true)">⏳ Connecting…</button>
+  <button class="btn-secondary" id="syncBtn" onclick="openCompanyMenu()">⏳ Connecting…</button>
 </div>
 
 <div class="period-bar">
@@ -344,8 +344,24 @@
     <div class="field" style="margin-bottom:10px"><label>Email</label><input type="email" id="login_email" autocomplete="username" placeholder="you@company.com"></div>
     <div class="field" style="margin-bottom:14px"><label>Password</label><input type="password" id="login_pw" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
     <button class="btn-primary" id="loginBtn" style="width:100%; justify-content:center" onclick="doLogin()">Sign In</button>
-    <div style="margin-top:12px; font-size:12px; color:var(--muted); text-align:center">Accounts are created by DLS Technology.<br>Contact us to subscribe.</div>
+    <div style="text-align:center; margin-top:10px"><a href="#" onclick="forgotPassword(); return false" style="color:var(--blue); font-size:13px; font-weight:600">Forgot password?</a></div>
+    <div style="margin-top:10px; font-size:12px; color:var(--muted); text-align:center">Accounts are created by DLS Technology.<br>Contact us to subscribe.</div>
   </div>
+</div>
+
+<!-- New password after a reset link -->
+<div class="overlay" id="resetOverlay">
+  <div class="modal" style="max-width:400px">
+    <h2>🔑 Set New Password</h2>
+    <div class="field" style="margin-bottom:10px"><label>New password (min 6)</label><input type="password" id="rs_pw1" autocomplete="new-password"></div>
+    <div class="field" style="margin-bottom:14px"><label>Repeat new password</label><input type="password" id="rs_pw2" autocomplete="new-password"></div>
+    <button class="btn-primary" style="width:100%; justify-content:center" onclick="completeReset()">Save New Password</button>
+  </div>
+</div>
+
+<!-- Company switcher / refresh menu -->
+<div class="overlay" id="companyOverlay">
+  <div class="modal" id="companyModal" style="max-width:380px"></div>
 </div>
 
 <!-- Info modal -->
@@ -369,7 +385,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.0.0-test (12 Jun 2026)';
+const APP_VERSION = '2.1.0-test (12 Jun 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -533,11 +549,79 @@ async function refreshData(showMsg) {
   }
 }
 
+const fmtDT = ts => {
+  if (!ts) return '—';
+  const d = new Date(ts), p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
 function setCloudStatus(s) {
   const b = document.getElementById('syncBtn');
   if (!b) return;
-  if (s === 'ok') b.innerHTML = `🏢 ${esc(companyInfo ? companyInfo.name : '')} <span style="font-size:11px;font-weight:500;color:var(--muted)">⟳</span>`;
+  if (s === 'ok') b.innerHTML = `🏢 ${esc(companyInfo ? companyInfo.name : '')} <span style="font-size:11px;font-weight:500;color:var(--muted)">✓ ${fmtDT(lastLoadAt)}</span>`;
   else b.textContent = s;
+}
+
+// top-right pill: switch company (auto-reloads data) or refresh
+function openCompanyMenu() {
+  if (!session || !companyId) { refreshData(true); return; }
+  document.getElementById('companyModal').innerHTML = `
+    <button class="modal-x" onclick="closeOverlay('companyOverlay')">✕</button>
+    <h2>🏢 Company</h2>
+    <div style="display:grid; gap:8px">
+      ${myCompanies.map(c => `<button class="${c.id === companyId ? 'btn-primary' : 'btn-secondary'}" onclick="switchCompany('${c.id}')">${esc(c.name)}${c.id === companyId ? ' ✓' : ''}</button>`).join('')}
+    </div>
+    <div style="margin-top:12px; font-size:12px; color:var(--muted)">Last synced: ${fmtDT(lastLoadAt)}</div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeOverlay('companyOverlay'); refreshData(true)">⟳ Refresh Data</button>
+    </div>`;
+  document.getElementById('companyOverlay').classList.add('show');
+}
+
+async function switchCompany(cid) {
+  closeOverlay('companyOverlay');
+  if (cid === companyId) { refreshData(true); return; }
+  await selectCompany(cid);
+  notify(`Switched to ${companyInfo ? companyInfo.name : ''} ✓`);
+}
+
+/* ---------- forgot password ---------- */
+async function forgotPassword() {
+  const email = document.getElementById('login_email').value.trim();
+  if (!email) { notify('Type your email in the Email box first, then tap Forgot password.', true); return; }
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/recover?redirect_to=' + encodeURIComponent(location.origin + location.pathname), {
+      method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+    if (!res.ok) throw new Error(await res.text());
+    notify('Reset link sent — check your email inbox (and spam folder).');
+  } catch (e) { console.error(e); notify('Could not send the reset email — try again in a few minutes.', true); }
+}
+
+// the email reset link returns here with tokens in the URL
+async function handleRecovery() {
+  if (!location.hash.includes('type=recovery')) return false;
+  const p = new URLSearchParams(location.hash.slice(1));
+  const at = p.get('access_token');
+  history.replaceState(null, '', location.pathname + location.search);
+  if (!at) return false;
+  try {
+    const u = await (await fetch(SUPA_URL + '/auth/v1/user', { headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + at } })).json();
+    saveSession({ access_token: at, refresh_token: p.get('refresh_token'), expires_at: Date.now() + 3500 * 1000, user: u });
+    document.getElementById('resetOverlay').classList.add('show');
+  } catch (e) { console.error(e); showLogin('Reset link expired — request a new one.'); }
+  return true;
+}
+
+async function completeReset() {
+  const a = document.getElementById('rs_pw1').value, b = document.getElementById('rs_pw2').value;
+  if (a.length < 6) { notify('Password must be at least 6 characters.', true); return; }
+  if (a !== b) { notify('The two passwords do not match.', true); return; }
+  try {
+    await api('/auth/v1/user', { method: 'PUT', body: JSON.stringify({ password: a }) });
+    closeOverlay('resetOverlay');
+    notify('Password updated ✓');
+    await bootCloud();
+  } catch (e) { saveFail(e); }
 }
 
 function applyRoleUI() {
@@ -991,18 +1075,6 @@ async function deleteCase(id) {
 let detailId = null, detailDraft = null, detailDirty = false;
 let editUnlocked = false;   // true after correct password, until the page is reloaded
 
-async function hashText(t) {
-  const s = 'inv-salt-' + t;
-  try {
-    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
-  } catch (e) {
-    let h = 5381;
-    for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
-    return 'x' + h.toString(16);
-  }
-}
-
 function openDetail(id) {
   const c0 = cases.find(c => c.id === id);
   if (!c0) return;
@@ -1019,7 +1091,6 @@ function renderDetail() {
   if (!c) return;
   const saved = cases.find(s => s.id === detailId);
   const locked = !!saved && computed(saved).closed && !editUnlocked;
-  const hasPass = !!settings.editPassHash;
   const x = computed(c);
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
@@ -1064,8 +1135,8 @@ function renderDetail() {
 
     ${locked ? `<div style="background:var(--amber-soft);color:var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🔒 This case is CLOSED and locked — view only.
       <div class="txn-form" style="margin-top:8px">
-        <input type="password" class="note" id="det_pass" placeholder="${hasPass ? 'Enter edit password to unlock' : 'Create an edit password (min 4 characters)'}" autocomplete="off">
-        <button class="btn-primary btn-small" onclick="unlockDetail()">${hasPass ? 'Unlock' : 'Set Password & Unlock'}</button>
+        <input type="password" class="note" id="det_pass" placeholder="Enter your login password to unlock" autocomplete="current-password">
+        <button class="btn-primary btn-small" onclick="unlockDetail()">Unlock</button>
       </div>
     </div>` : ''}
 
@@ -1105,22 +1176,19 @@ function closeDetail() {
   closeOverlay('detailOverlay');
 }
 
+// re-enter the LOGIN password to edit a closed case
 async function unlockDetail() {
   const v = document.getElementById('det_pass').value;
-  if (!settings.editPassHash) {
-    if (v.length < 4) { notify('Password must be at least 4 characters.', true); return; }
-    settings.editPassHash = await hashText(v);
-    editUnlocked = true;
-    upsertSettings().catch(saveFail);
-    notify('Password set ✓ Remember it — you need it to edit closed cases.');
-    renderDetail();
-  } else if (await hashText(v) === settings.editPassHash) {
+  if (!v) { notify('Enter your login password.', true); return; }
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: session.user.email, password: v }) });
+    if (!res.ok) { notify('Wrong password.', true); return; }
     editUnlocked = true;
     notify('Unlocked ✓ Closed cases stay editable until you reload the page.');
     renderDetail();
-  } else {
-    notify('Wrong password.', true);
-  }
+  } catch (e) { notify('Could not verify — check your internet.', true); }
 }
 
 function draftToggle(key, val) {
@@ -1417,18 +1485,19 @@ function showInfo(key) {
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
+const PROTECTED_OVERLAYS = ['loginOverlay', 'resetOverlay'];   // cannot be dismissed
 function closeAllOverlays() {
   document.querySelectorAll('.overlay.show').forEach(o => {
-    if (o.id === 'loginOverlay') return;                       // login cannot be dismissed
+    if (PROTECTED_OVERLAYS.includes(o.id)) return;
     if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show');
   });
 }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => {
-  if (e.target === o && o.id !== 'loginOverlay') { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
+  if (e.target === o && !PROTECTED_OVERLAYS.includes(o.id)) { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
 }));
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => {
-    if (o.id === 'loginOverlay') return;
+    if (PROTECTED_OVERLAYS.includes(o.id)) return;
     if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show');
   });
 });
@@ -1487,15 +1556,6 @@ function renderProfile() {
     </div>
 
     <div class="leg" style="margin-bottom:12px">
-      <h3>🔒 Edit Password <span style="font-weight:400;color:var(--muted);font-size:12px">(protects closed cases)</span></h3>
-      <div class="txn-form" style="margin-top:8px">
-        ${settings.editPassHash ? '<input type="password" id="pp_cur" class="amt" placeholder="Current password" autocomplete="off">' : ''}
-        <input type="password" id="pp_new" class="amt" placeholder="New password (min 4)" autocomplete="off">
-        <button class="btn-primary btn-small" onclick="changeEditPass()">${settings.editPassHash ? 'Change' : 'Set'} Password</button>
-      </div>
-    </div>
-
-    <div class="leg" style="margin-bottom:12px">
       <h3>💾 Data</h3>
       <div class="txn-form" style="margin-top:8px">
         <button class="btn-secondary btn-small" onclick="exportJSON()">Backup</button>
@@ -1510,20 +1570,6 @@ function renderProfile() {
       <div style="margin-top:10px;font-size:12px;color:var(--muted)">Invoice Tracker · DLS Technology · Version ${APP_VERSION}</div>
     </div>
     </div>`;
-}
-
-async function changeEditPass() {
-  const nw = document.getElementById('pp_new').value;
-  if (settings.editPassHash) {
-    const cur = document.getElementById('pp_cur').value;
-    if (await hashText(cur) !== settings.editPassHash) { notify('Current password is wrong.', true); return; }
-  }
-  if (nw.length < 4) { notify('New password must be at least 4 characters.', true); return; }
-  settings.editPassHash = await hashText(nw);
-  editUnlocked = false;
-  try { await upsertSettings(); } catch (e) { saveFail(e); return; }
-  notify('Edit password updated ✓');
-  renderProfile();
 }
 
 /* ---------- page navigation (remembers where you are) ---------- */
@@ -1564,8 +1610,11 @@ render();
 let savedView = 'home';
 try { savedView = localStorage.getItem('invTrackView') || 'home'; } catch (e) {}
 mobileGo(savedView);
-if (session) bootCloud().catch(e => { console.error(e); showLogin('Could not connect — pull down to retry, or sign in again.'); });
-else showLogin();
+handleRecovery().then(handled => {
+  if (handled) return;
+  if (session) bootCloud().catch(e => { console.error(e); showLogin('Could not connect — pull down to retry, or sign in again.'); });
+  else showLogin();
+});
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
