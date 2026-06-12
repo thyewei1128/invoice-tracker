@@ -230,6 +230,9 @@
     .chip { padding: 7px 2px; font-size: 11.5px; }
     /* Profile lives in the bottom tab bar on mobile; Back is desktop-only */
     #profileBtn, .page-back { display: none; }
+    /* New Case form: one clean column on phones */
+    .form-grid { grid-template-columns: 1fr; gap: 10px; }
+    .field input, .field select { width: 100%; }
     /* tables inside cards: compact so they fit the phone width */
     .leg { padding: 12px 10px; }
     .leg td, .leg th { padding: 5px 3px; font-size: 12px; }
@@ -349,7 +352,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.12.6 (12 Jun 2026)';
+const APP_VERSION = '1.12.7 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
