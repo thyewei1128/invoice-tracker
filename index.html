@@ -130,10 +130,12 @@
   #ptr { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 70; text-align: center; padding: 12px; font-size: 13px; font-weight: 700; color: #fff; background: var(--accent); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
 
-  .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .field.full { grid-column: 1 / -1; }
   .field label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 5px; }
-  .field input, .field select { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  .field input, .field select { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
   .field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  .field input[type="date"] { -webkit-appearance: none; appearance: none; min-height: 40px; text-align: left; }
 
   .calc-preview { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; margin-top: 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
   .calc-preview b { font-variant-numeric: tabular-nums; }
@@ -230,9 +232,13 @@
     .chip { padding: 7px 2px; font-size: 11.5px; }
     /* Profile lives in the bottom tab bar on mobile; Back is desktop-only */
     #profileBtn, .page-back { display: none; }
-    /* New Case form: one clean column on phones */
-    .form-grid { grid-template-columns: 1fr; gap: 10px; }
-    .field input, .field select { width: 100%; }
+    /* New Case form: compact two-per-row pairs so everything fits one screen */
+    .form-grid { gap: 8px; }
+    .field label { font-size: 11px; margin-bottom: 3px; }
+    .field input, .field select { padding: 8px 9px; }
+    .field input[type="date"] { min-height: 37px; }
+    .calc-preview { padding: 9px 12px; margin-top: 10px; font-size: 12px; gap: 4px; }
+    .modal h2 { margin-bottom: 10px; }
     /* tables inside cards: compact so they fit the phone width */
     .leg { padding: 12px 10px; }
     .leg td, .leg th { padding: 5px 3px; font-size: 12px; }
@@ -305,9 +311,12 @@
     <h2 id="formTitle">New Case</h2>
     <div class="form-grid">
       <div class="field"><label>Date</label><input type="date" id="f_date"></div>
-      <div class="field"><label>Company</label><input type="text" id="f_company" placeholder="Company name"></div>
-      <div class="field"><label>Agent</label><input type="text" id="f_pic" list="agentList" placeholder="Choose or type new agent" oninput="agentChanged()"><datalist id="agentList"></datalist></div>
       <div class="field"><label>Invoice Amount (RM)</label><input type="number" id="f_amount" step="0.01" min="0" oninput="updatePreview()"></div>
+      <div class="field full"><label>Company</label><input type="text" id="f_company" placeholder="Company name"></div>
+      <div class="field full"><label>Agent</label>
+        <select id="f_pic_select" onchange="agentSelectChanged()"></select>
+        <input type="text" id="f_pic" placeholder="Type the new agent name" style="display:none; margin-top:6px">
+      </div>
       <div class="field"><label>Selling %</label><input type="number" id="f_selling" step="0.01" min="0" oninput="updatePreview()"></div>
       <div class="field"><label>Cost %</label><input type="number" id="f_cost" step="0.01" min="0" value="1" oninput="updatePreview()"></div>
       <div class="field"><label>Referral %</label><input type="number" id="f_referral" step="0.01" min="0" value="0" oninput="updatePreview()"></div>
@@ -352,7 +361,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.12.7 (12 Jun 2026)';
+const APP_VERSION = '1.13.0 (12 Jun 2026)';
 const STORAGE_KEY = 'invoiceTrackerData_v1';
 const SYNC_KEY = 'invoiceTrackerSync_v1';
 let cases = [];
@@ -684,10 +693,19 @@ function agentNames() {
   return [...new Set([...(settings.agents || []), ...cases.map(c => c.pic)].filter(Boolean))].sort();
 }
 
-// when an existing agent is chosen, prefill their usual rates from their last saved case
-function agentChanged() {
-  const name = document.getElementById('f_pic').value.trim();
-  const d = (settings.agentDefaults || {})[name];
+// the chosen agent: from the dropdown, or the typed name when "Add new agent" is picked
+function currentAgent() {
+  const sel = document.getElementById('f_pic_select').value;
+  return sel === '__new' ? document.getElementById('f_pic').value.trim() : sel;
+}
+
+// picking an existing agent prefills their usual rates; "Add new agent" reveals the typing box
+function agentSelectChanged() {
+  const sel = document.getElementById('f_pic_select').value;
+  const txt = document.getElementById('f_pic');
+  txt.style.display = sel === '__new' ? '' : 'none';
+  if (sel === '__new') { txt.value = ''; txt.focus(); return; }
+  const d = (settings.agentDefaults || {})[sel];
   if (!d) return;
   document.getElementById('f_selling').value = d.sellingPct;
   document.getElementById('f_cost').value = d.costPct;
@@ -700,11 +718,17 @@ function openCaseForm(id) {
   if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   closeAllOverlays();
   editingId = id || null;
-  document.getElementById('agentList').innerHTML = agentNames().map(p => `<option value="${esc(p)}"></option>`).join('');
+  const agents = agentNames();
+  const currentPicVal = c ? (c.pic || '') : '';
+  document.getElementById('f_pic_select').innerHTML =
+    '<option value="">— Select agent —</option>' +
+    agents.map(a => `<option ${a === currentPicVal ? 'selected' : ''} value="${esc(a)}">${esc(a)}</option>`).join('') +
+    '<option value="__new">➕ Add new agent…</option>';
+  document.getElementById('f_pic').style.display = 'none';
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
   document.getElementById('f_date').value = c ? c.date : today();
   document.getElementById('f_company').value = c ? c.company : '';
-  document.getElementById('f_pic').value = c ? c.pic : '';
+  document.getElementById('f_pic').value = '';
   document.getElementById('f_amount').value = c ? c.amount : '';
   document.getElementById('f_selling').value = c ? c.sellingPct : '';
   document.getElementById('f_cost').value = c ? c.costPct : 1;
@@ -731,7 +755,7 @@ function updatePreview() {
 function saveCaseForm() {
   const date = document.getElementById('f_date').value;
   const company = document.getElementById('f_company').value.trim();
-  const pic = document.getElementById('f_pic').value.trim();
+  const pic = currentAgent();
   const amountRaw = document.getElementById('f_amount').value.trim();
   const sellingRaw = document.getElementById('f_selling').value.trim();
   const costRaw = document.getElementById('f_cost').value.trim();
@@ -740,7 +764,7 @@ function saveCaseForm() {
   // all fields compulsory except referral name
   if (!date) { notify('Please choose the date.', true); return; }
   if (!company) { notify('Please enter the company name.', true); return; }
-  if (!pic) { notify('Please choose or type the agent name.', true); return; }
+  if (!pic) { notify('Please select an agent, or use "Add new agent" and type the name.', true); return; }
   if (amountRaw === '') { notify('Please enter the invoice amount.', true); return; }
   if (sellingRaw === '') { notify('Please enter the Selling %.', true); return; }
   if (costRaw === '') { notify('Please enter the Cost %.', true); return; }
