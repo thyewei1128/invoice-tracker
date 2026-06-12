@@ -98,11 +98,11 @@
       <div id="companiesBox" class="muted">Loading…</div>
       <div class="row-form" style="border-top:1px solid var(--border); padding-top:12px; margin-top:14px">
         <input type="text" id="nc_name" placeholder="New company name" style="flex:1; min-width:140px">
-        <label class="muted">Users:</label>
+        <label class="muted">Logins:</label>
         <input type="number" id="nc_max" style="width:64px" value="3" min="1">
         <button class="btn-accent" onclick="createCompany()">+ Create</button>
       </div>
-      <div class="muted" style="margin-top:6px">Base plan = 3 users. Click a company to manage it on the right →</div>
+      <div class="muted" style="margin-top:6px">Base plan = 3 concurrent logins (named users unlimited). Click a company to manage it on the right →</div>
 
       <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px">
         <h3>👤 My Account</h3>
@@ -124,7 +124,7 @@
         <div class="settings-grid">
           <div class="wide"><label>Company Name</label><input type="text" id="cs_name"></div>
           <div><label>Status</label><select id="cs_status"><option value="active">Active</option><option value="suspended">Suspended</option></select></div>
-          <div><label>Max Users (seats)</label><input type="number" id="cs_max" min="1"></div>
+          <div><label>Max Concurrent Logins</label><input type="number" id="cs_max" min="1"></div>
           <div><label>Expires (empty = never)</label><input type="date" id="cs_exp"></div>
           <div style="display:flex; align-items:flex-end"><button class="btn-primary" style="width:100%" onclick="saveCompanySettings()">💾 Save</button></div>
         </div>
@@ -152,7 +152,7 @@
         <select id="am_role2"><option value="staff">Staff</option><option value="owner">Owner</option></select>
         <button class="btn-accent" onclick="createMember()">+ Create User</button>
       </div>
-      <div class="muted" style="margin-top:6px">One user can join several companies — they occupy one seat in each. Owners see profit &amp; withdrawals; staff cannot.</div>
+      <div class="muted" style="margin-top:6px">Named users are unlimited — the limit is how many can be logged in at the SAME TIME (Max Concurrent Logins above). One user in several companies takes a login slot in each while active. Owners see profit &amp; withdrawals; staff cannot.</div>
     </div>
   </div>
 </div>
@@ -162,7 +162,7 @@
 <script>
 const SUPA_URL = 'https://twuzrclcychwlklnhnzm.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3dXpyY2xjeWNod2xrbG5obnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzk4MTcsImV4cCI6MjA5NjgxNTgxN30.Z11HlfmXFcl458ceTh7ZJ50J-BtyP8HRWiZNRE_z4Jk';
-const ADMIN_VERSION = '1.1.0 (12 Jun 2026)';
+const ADMIN_VERSION = '1.2.0 (12 Jun 2026)';
 const SESSION_KEY = 'invAdminSession_v1';
 let session = null;
 try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
@@ -258,14 +258,22 @@ async function changeAdminPassword() {
   } catch (e) { notify('Failed: ' + errMsg(e), true); }
 }
 
+let sessions = [];
 async function loadAll() {
-  [companies, profiles, memberships] = await Promise.all([
+  [companies, profiles, memberships, sessions] = await Promise.all([
     api('/rest/v1/companies?select=*'),
     api('/rest/v1/profiles?select=*&order=full_name'),
     api('/rest/v1/memberships?select=*'),
+    api('/rest/v1/active_sessions?select=company_id,user_id,last_active').catch(() => []),
   ]);
   renderCompanies();
   renderMembers();
+}
+
+// distinct people active in the last 5 minutes
+function onlineCount(cid) {
+  const cutoff = Date.now() - 5 * 60 * 1000;
+  return new Set(sessions.filter(s => s.company_id === cid && new Date(s.last_active).getTime() > cutoff).map(s => s.user_id)).size;
 }
 
 /* ---------- companies list: search + sortable columns ---------- */
@@ -302,14 +310,17 @@ function renderCompanies() {
     <th class="sortable" onclick="setCoSort('name')">Company${arrow('name')}</th>
     <th class="sortable" onclick="setCoSort('status')">Status${arrow('status')}</th>
     <th class="sortable" onclick="setCoSort('users')">Users${arrow('users')}</th>
+    <th>Online</th>
     <th class="sortable" onclick="setCoSort('exp')">Expires${arrow('exp')}</th>
   </tr></thead><tbody>
   ${list.map(c => {
     const expired = c.expires_at && c.expires_at < todayISO();
+    const on = onlineCount(c.id);
     return `<tr class="co-row ${c.id === openCompanyId ? 'selected' : ''}" onclick="openMembers('${c.id}')">
       <td><b>${esc(c.name)}</b></td>
       <td><span class="badge ${c.status === 'active' ? (expired ? 'expired' : 'active') : 'suspended'}">${c.status !== 'active' ? 'Suspended' : (expired ? 'Expired' : 'Active')}</span></td>
-      <td>${usedSeats(c.id)} / ${c.max_users}</td>
+      <td>${usedSeats(c.id)}</td>
+      <td>${on > 0 ? '🟢 ' : ''}${on} / ${c.max_users}</td>
       <td>${fmtD(c.expires_at)}</td>
     </tr>`;
   }).join('')}
@@ -344,7 +355,7 @@ function renderMembers() {
   document.getElementById('cs_exp').value = c.expires_at || '';
 
   const used = memberships.filter(m => m.company_id === c.id);
-  document.getElementById('seatTitle').textContent = `👥 Users (${used.length} of ${c.max_users} seats used)`;
+  document.getElementById('seatTitle').textContent = `👥 Users (${used.length} named · ${onlineCount(c.id)} of ${c.max_users} logins in use)`;
   document.getElementById('membersBox').innerHTML = used.length ? `<table><thead><tr>
     <th>Name</th><th>Email</th><th>App Version</th><th>Role</th><th></th>
   </tr></thead><tbody>

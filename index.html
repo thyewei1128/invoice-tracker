@@ -299,6 +299,7 @@
     <option value="open">Open</option>
     <option value="closed">Closed</option>
   </select>
+  <select id="filterUser" onchange="onFilterChange()" style="display:none"><option value="">All Users</option></select>
   <button class="btn-secondary" id="profileBtn" onclick="openProfile()">⚙️ Profile</button>
   <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
 </div>
@@ -368,6 +369,18 @@
   <div class="modal" id="companyModal" style="max-width:380px"></div>
 </div>
 
+<!-- Concurrent-login limit reached -->
+<div class="overlay" id="seatOverlay">
+  <div class="modal" style="max-width:400px">
+    <h2>⛔ All Login Slots In Use</h2>
+    <div style="font-size:14px; line-height:1.7">Your company's concurrent-login limit has been reached — colleagues are using the system right now.<br><br>Ask one of them to log out (slots also free up 5 minutes after the app is closed), then try again.<br><br>Need more people working at the same time? Contact DLS Technology to add login slots.</div>
+    <div class="modal-actions">
+      <button class="btn-danger" onclick="logout()">Log Out</button>
+      <button class="btn-primary" onclick="retrySeat()">⟳ Try Again</button>
+    </div>
+  </div>
+</div>
+
 <!-- Info modal -->
 <div class="overlay" id="infoOverlay">
   <div class="modal" id="infoModal" style="max-width:520px"></div>
@@ -389,7 +402,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.4.0 (12 Jun 2026)';
+const APP_VERSION = '2.5.0 (12 Jun 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -409,6 +422,12 @@ let session = null;
 try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
 let me = null, myMemberships = [], myCompanies = [];
 let companyId = null, userRole = 'staff', companyInfo = null, lastLoadAt = 0;
+let companyUsers = [], userMap = {};   // for the owner's audit trail
+let DEVICE_ID = '';
+try {
+  DEVICE_ID = localStorage.getItem('invTrackDevice') || '';
+  if (!DEVICE_ID) { DEVICE_ID = Math.random().toString(36).slice(2) + Date.now().toString(36); localStorage.setItem('invTrackDevice', DEVICE_ID); }
+} catch (e) { DEVICE_ID = 'dev'; }
 
 function saveSession(s) {
   session = s;
@@ -439,12 +458,14 @@ async function api(path, opts = {}, retry = true) {
 const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
-  customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [] });
+  customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
+  createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null });
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
   referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
-  supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [], updated_at: new Date().toISOString() });
+  supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [],
+  updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
 const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '' });
 const rowToWd = r => ({ id: r.id, date: r.w_date, partner: r.partner, amount: +r.amount, note: r.note || '' });
 
@@ -489,6 +510,13 @@ async function doLogin() {
 }
 
 function logout() {
+  // free our login slot immediately so a colleague can sign in
+  if (session && companyId) {
+    fetch(SUPA_URL + '/rest/v1/rpc/release_session', { method: 'POST', keepalive: true,
+      headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_company: companyId, p_device: DEVICE_ID }) }).catch(() => {});
+  }
+  closeOverlay('seatOverlay');
   saveSession(null);
   companyId = null; me = null; myMemberships = []; myCompanies = []; companyInfo = null;
   cases = []; adjustments = []; withdrawals = []; settings = {}; partners = ['Partner 1', 'Partner 2', 'Partner 3'];
@@ -520,8 +548,47 @@ async function selectCompany(cid) {
   companyInfo = myCompanies.find(c => c.id === cid) || null;
   hideLogin();
   applyRoleUI();
+  // concurrent-login licensing: claim one of the company's login slots
+  const ok = await claimSeat();
+  if (!ok) { document.getElementById('seatOverlay').classList.add('show'); return; }
+  closeOverlay('seatOverlay');
   await refreshData(false);
   renderProfile();
+}
+
+async function claimSeat() {
+  if (me && me.is_super_admin) return true;
+  try {
+    const r = await api('/rest/v1/rpc/claim_session', { method: 'POST', body: JSON.stringify({ p_company: companyId, p_device: DEVICE_ID }) });
+    return r !== false;
+  } catch (e) { console.error(e); return true; }
+}
+function retrySeat() { selectCompany(companyId); }
+
+// heartbeat keeps our slot alive; slots free 5 minutes after the app closes
+setInterval(() => {
+  if (session && companyId && !document.hidden && me && !me.is_super_admin) {
+    api('/rest/v1/rpc/claim_session', { method: 'POST', body: JSON.stringify({ p_company: companyId, p_device: DEVICE_ID }) })
+      .then(ok => { if (ok === false) document.getElementById('seatOverlay').classList.add('show'); })
+      .catch(() => {});
+  }
+}, 60000);
+
+// owner-only: who is who, for the audit trail and the user filter
+async function loadCompanyUsers() {
+  try {
+    const ms = await api(`/rest/v1/memberships?company_id=eq.${companyId}&select=user_id,profiles(id,full_name,email)`);
+    companyUsers = ms.map(m => m.profiles).filter(Boolean);
+    userMap = {};
+    companyUsers.forEach(p => { userMap[p.id] = p.full_name || p.email || '—'; });
+    const sel = document.getElementById('filterUser');
+    if (sel) {
+      const cur = sel.value;
+      sel.innerHTML = '<option value="">All Users</option>' + companyUsers.map(p => `<option value="${p.id}" ${p.id === cur ? 'selected' : ''}>${esc(userMap[p.id])}</option>`).join('');
+      sel.style.display = '';
+      render();
+    }
+  } catch (e) { console.error(e); }
 }
 
 const companySuspended = () => companyInfo && (companyInfo.status !== 'active' || (companyInfo.expires_at && companyInfo.expires_at < today()));
@@ -652,6 +719,9 @@ function applyRoleUI() {
   const owner = userRole === 'owner';
   const fin = document.getElementById('bn-finance');
   if (fin) fin.style.display = owner ? '' : 'none';
+  const fu = document.getElementById('filterUser');
+  if (fu && !owner) { fu.style.display = 'none'; fu.value = ''; }
+  if (owner) loadCompanyUsers();
 }
 
 async function changeLoginPassword() {
@@ -862,6 +932,8 @@ function render() {
   if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
   if (fPic) list = list.filter(r => r.c.pic === fPic);
   if (fStatus) list = list.filter(r => fStatus === 'closed' ? r.x.closed : !r.x.closed);
+  const fUser = document.getElementById('filterUser').value;
+  if (fUser) list = list.filter(r => r.c.createdBy === fUser || r.c.updatedBy === fUser);
 
   // sort by the clicked column
   const sortVal = ({ c, x }) => {
@@ -1066,7 +1138,7 @@ async function saveCaseForm() {
       Object.assign(local, data);
     } else {
       const draft = { invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [], ...data };
-      const rows = await api('/rest/v1/cases', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(caseToRow(draft)) });
+      const rows = await api('/rest/v1/cases', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ ...caseToRow(draft), created_by: session?.user?.id || null }) });
       cases.unshift(rowToCase(rows[0]));
     }
   } catch (e) { saveFail(e); return; }
@@ -1151,6 +1223,7 @@ function renderDetail() {
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
         <div class="meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+        ${userRole === 'owner' && (c.createdBy || c.updatedBy) ? `<div class="meta" style="font-size:11px">✍️ Created by <b>${esc(userMap[c.createdBy] || '—')}</b>${c.createdAt ? ' · ' + fmtDT(new Date(c.createdAt).getTime()) : ''}${c.updatedBy ? `<br>✏️ Last edit by <b>${esc(userMap[c.updatedBy] || '—')}</b>${c.updatedAt ? ' · ' + fmtDT(new Date(c.updatedAt).getTime()) : ''}` : ''}</div>` : ''}
       </div>
       ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
     </div>
@@ -1492,7 +1565,7 @@ function showInfo(key) {
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
-const PROTECTED_OVERLAYS = ['loginOverlay', 'resetOverlay'];   // cannot be dismissed
+const PROTECTED_OVERLAYS = ['loginOverlay', 'resetOverlay', 'seatOverlay'];   // cannot be dismissed
 function closeAllOverlays() {
   document.querySelectorAll('.overlay.show').forEach(o => {
     if (PROTECTED_OVERLAYS.includes(o.id)) return;
