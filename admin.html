@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DLS Admin | Invoice Tracker</title>
+<meta name="robots" content="noindex">
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #FAF5EE; --card: #FFFFFF; --text: #14222C; --muted: #6B7884; --border: #E4DDD0;
+    --accent: #1F4D63; --accent-2: #143947; --accent-soft: #F2E9DA;
+    --tan: #D4B190; --tan-2: #E4C8A9; --tan-3: #B8946F;
+    --green: #2E7D5B; --green-soft: #DDEFE2; --red: #b91c1c; --red-soft: #fee2e2;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: 'Inter', -apple-system, sans-serif; background: var(--bg); color: var(--text); padding: 24px; max-width: 1100px; margin: 0 auto; }
+  h1 { font-size: 22px; color: var(--accent); font-weight: 800; }
+  h2 { font-size: 16px; color: var(--accent); margin-bottom: 12px; }
+  .eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--tan-3); font-weight: 700; }
+  .topbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 18px; flex-wrap: wrap; }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 18px; margin-bottom: 16px; }
+  button { cursor: pointer; border: none; border-radius: 8px; padding: 9px 14px; font-size: 14px; font-weight: 600; font-family: inherit; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: var(--accent-2); }
+  .btn-accent { background: var(--tan); color: var(--accent-2); }
+  .btn-secondary { background: var(--card); color: var(--text); border: 1px solid var(--border); }
+  .btn-danger { background: var(--red-soft); color: var(--red); }
+  .btn-small { padding: 5px 10px; font-size: 12px; }
+  button:disabled { opacity: 0.4; cursor: default; }
+  input, select { padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; font-family: inherit; background: var(--card); }
+  table { width: 100%; border-collapse: collapse; }
+  th { background: var(--accent-soft); text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 9px 10px; color: var(--accent); white-space: nowrap; }
+  td { padding: 9px 10px; border-top: 1px solid var(--border); font-size: 14px; vertical-align: middle; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .badge.active { background: var(--green-soft); color: var(--green); }
+  .badge.suspended { background: var(--red-soft); color: var(--red); }
+  .badge.role { background: var(--accent-soft); color: var(--accent); }
+  .row-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 10px; }
+  .muted { color: var(--muted); font-size: 12px; }
+  .toast-wrap { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 100; display: flex; flex-direction: column; gap: 8px; align-items: center; }
+  .toast { background: #0E2A35; color: #fff; padding: 10px 18px; border-radius: 10px; font-size: 13px; font-weight: 600; }
+  .toast.error { background: var(--red); }
+  #app { display: none; }
+  #loginCard { max-width: 380px; margin: 8vh auto 0; }
+  .num-input { width: 70px; }
+  td input[type="date"] { padding: 5px 7px; font-size: 13px; }
+  @media (max-width: 640px) { body { padding: 12px; } td, th { padding: 7px 6px; font-size: 13px; } }
+</style>
+</head>
+<body>
+
+<!-- Sign in -->
+<div class="card" id="loginCard">
+  <div style="text-align:center; margin-bottom:8px"><img src="icon-192.png" alt="" style="width:56px; border-radius:14px"></div>
+  <div class="eyebrow" style="text-align:center">DLS Technology</div>
+  <h1 style="text-align:center; margin-bottom:14px">Admin Dashboard</h1>
+  <div id="loginMsg" style="display:none; background:var(--red-soft); color:var(--red); border-radius:8px; padding:9px 12px; font-size:13px; margin-bottom:10px"></div>
+  <input type="email" id="login_email" placeholder="Email" autocomplete="username" style="width:100%; margin-bottom:10px">
+  <input type="password" id="login_pw" placeholder="Password" autocomplete="current-password" style="width:100%; margin-bottom:14px" onkeydown="if(event.key==='Enter')doLogin()">
+  <button class="btn-primary" id="loginBtn" style="width:100%" onclick="doLogin()">Sign In</button>
+</div>
+
+<!-- Dashboard -->
+<div id="app">
+  <div class="topbar">
+    <div>
+      <div class="eyebrow">DLS Technology · Super Admin</div>
+      <h1>Customer Dashboard</h1>
+    </div>
+    <div style="display:flex; gap:8px">
+      <button class="btn-secondary" onclick="loadAll()">⟳ Refresh</button>
+      <button class="btn-danger" onclick="logout()">Log Out</button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>🏢 Companies</h2>
+    <div id="companiesBox" class="muted">Loading…</div>
+    <div class="row-form">
+      <input type="text" id="nc_name" placeholder="New company name" style="flex:1; min-width:160px">
+      <label class="muted">Users:</label>
+      <input type="number" id="nc_max" class="num-input" value="3" min="1">
+      <label class="muted">Expires:</label>
+      <input type="date" id="nc_exp">
+      <button class="btn-accent" onclick="createCompany()">+ Create Company</button>
+    </div>
+    <div class="muted" style="margin-top:6px">Base plan = 3 users. Add-on seats: raise the user number. Leave Expires empty for no expiry.</div>
+  </div>
+
+  <div class="card" id="membersCard" style="display:none">
+    <h2 id="membersTitle">👥 Users</h2>
+    <div id="membersBox"></div>
+    <div class="row-form">
+      <select id="am_existing" style="min-width:180px"><option value="">— Add existing user —</option></select>
+      <select id="am_role1"><option value="staff">Staff</option><option value="owner">Owner</option></select>
+      <button class="btn-secondary" onclick="addExistingMember()">Add</button>
+    </div>
+    <div class="row-form">
+      <input type="text" id="nu_name" placeholder="New user name" style="min-width:130px">
+      <input type="email" id="nu_email" placeholder="Email" style="min-width:170px">
+      <input type="text" id="nu_pw" placeholder="Password (min 6)" style="min-width:130px">
+      <select id="am_role2"><option value="staff">Staff</option><option value="owner">Owner</option></select>
+      <button class="btn-accent" onclick="createMember()">+ Create User &amp; Add</button>
+    </div>
+    <div class="muted" style="margin-top:6px">One user can join several companies — they occupy one seat in each. Owners see profit &amp; withdrawals; staff cannot.</div>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toasts"></div>
+
+<script>
+const SUPA_URL = 'https://twuzrclcychwlklnhnzm.supabase.co';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3dXpyY2xjeWNod2xrbG5obnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzk4MTcsImV4cCI6MjA5NjgxNTgxN30.Z11HlfmXFcl458ceTh7ZJ50J-BtyP8HRWiZNRE_z4Jk';
+const SESSION_KEY = 'invAdminSession_v1';
+let session = null;
+try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
+let companies = [], profiles = [], memberships = [], openCompanyId = null;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtD = s => { if (!s) return '—'; const [y, m, d] = String(s).split('-'); return `${d}/${m}/${y}`; };
+function notify(msg, isError) {
+  const d = document.createElement('div');
+  d.className = 'toast' + (isError ? ' error' : '');
+  d.textContent = msg;
+  document.getElementById('toasts').appendChild(d);
+  setTimeout(() => d.remove(), 4000);
+}
+
+function saveSession(s) { session = s; try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch (e) {} }
+
+async function refreshSession() {
+  const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=refresh_token', { method: 'POST',
+    headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ refresh_token: session.refresh_token }) });
+  if (!res.ok) { saveSession(null); showLogin('Session expired — sign in again.'); throw new Error('expired'); }
+  const d = await res.json();
+  saveSession({ access_token: d.access_token, refresh_token: d.refresh_token, expires_at: Date.now() + (d.expires_in || 3600) * 1000, user: d.user });
+}
+
+async function api(path, opts = {}, retry = true) {
+  if (!session) throw new Error('not signed in');
+  if (Date.now() > (session.expires_at || 0) - 60000) await refreshSession();
+  const res = await fetch(SUPA_URL + path, { ...opts,
+    headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  if (res.status === 401 && retry) { await refreshSession(); return api(path, opts, false); }
+  if (!res.ok) throw new Error(await res.text());
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
+function errMsg(e) {
+  try { const j = JSON.parse(e.message); return j.message || j.error_description || e.message; } catch (_) { return e.message; }
+}
+
+function showLogin(msg) {
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('loginCard').style.display = 'block';
+  const m = document.getElementById('loginMsg');
+  m.style.display = msg ? 'block' : 'none'; m.textContent = msg || '';
+}
+
+async function doLogin() {
+  const email = document.getElementById('login_email').value.trim();
+  const pw = document.getElementById('login_pw').value;
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', { method: 'POST',
+      headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password: pw }) });
+    if (!res.ok) { showLogin('Wrong email or password.'); return; }
+    const d = await res.json();
+    saveSession({ access_token: d.access_token, refresh_token: d.refresh_token, expires_at: Date.now() + (d.expires_in || 3600) * 1000, user: d.user });
+    await boot();
+  } catch (e) { showLogin('Could not connect — check internet.'); }
+  finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+}
+
+function logout() { saveSession(null); showLogin(); }
+
+async function boot() {
+  const meRows = await api(`/rest/v1/profiles?id=eq.${session.user.id}&select=is_super_admin`);
+  if (!meRows.length || !meRows[0].is_super_admin) { saveSession(null); showLogin('This dashboard is for the DLS super admin only.'); return; }
+  document.getElementById('loginCard').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  await loadAll();
+}
+
+async function loadAll() {
+  [companies, profiles, memberships] = await Promise.all([
+    api('/rest/v1/companies?select=*&order=name'),
+    api('/rest/v1/profiles?select=*&order=full_name'),
+    api('/rest/v1/memberships?select=*'),
+  ]);
+  renderCompanies();
+  renderMembers();
+}
+
+function renderCompanies() {
+  const box = document.getElementById('companiesBox');
+  if (!companies.length) { box.innerHTML = '<div class="muted">No companies yet — create your first customer below.</div>'; return; }
+  box.innerHTML = `<table><thead><tr>
+    <th>Company</th><th>Status</th><th>Users</th><th>Max</th><th>Expires</th><th></th>
+  </tr></thead><tbody>
+  ${companies.map(c => {
+    const used = memberships.filter(m => m.company_id === c.id).length;
+    return `<tr>
+      <td><b>${esc(c.name)}</b></td>
+      <td><span class="badge ${c.status}">${c.status === 'active' ? 'Active' : 'Suspended'}</span></td>
+      <td>${used} / ${c.max_users}</td>
+      <td><input type="number" class="num-input" value="${c.max_users}" min="1" onchange="updateCompany('${c.id}', {max_users: Number(this.value)})"></td>
+      <td><input type="date" value="${c.expires_at || ''}" onchange="updateCompany('${c.id}', {expires_at: this.value || null})"></td>
+      <td style="white-space:nowrap">
+        <button class="btn-secondary btn-small" onclick="openMembers('${c.id}')">👥 Users</button>
+        <button class="${c.status === 'active' ? 'btn-danger' : 'btn-primary'} btn-small" onclick="updateCompany('${c.id}', {status: '${c.status === 'active' ? 'suspended' : 'active'}'})">${c.status === 'active' ? 'Suspend' : 'Activate'}</button>
+      </td>
+    </tr>`;
+  }).join('')}
+  </tbody></table>`;
+}
+
+async function createCompany() {
+  const name = document.getElementById('nc_name').value.trim();
+  if (!name) { notify('Enter the company name.', true); return; }
+  try {
+    await api('/rest/v1/companies', { method: 'POST', body: JSON.stringify({
+      name, max_users: Number(document.getElementById('nc_max').value) || 3,
+      expires_at: document.getElementById('nc_exp').value || null }) });
+    document.getElementById('nc_name').value = '';
+    await loadAll();
+    notify(`Company "${name}" created ✓ Now add its users.`);
+  } catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+async function updateCompany(id, patch) {
+  try {
+    await api(`/rest/v1/companies?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
+    await loadAll();
+    notify('Company updated ✓');
+  } catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+function openMembers(cid) { openCompanyId = cid; renderMembers(); document.getElementById('membersCard').scrollIntoView({ behavior: 'smooth' }); }
+
+function renderMembers() {
+  const card = document.getElementById('membersCard');
+  const c = companies.find(x => x.id === openCompanyId);
+  if (!c) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const used = memberships.filter(m => m.company_id === c.id);
+  document.getElementById('membersTitle').textContent = `👥 Users — ${c.name} (${used.length}/${c.max_users} seats)`;
+  document.getElementById('membersBox').innerHTML = used.length ? `<table><thead><tr>
+    <th>Name</th><th>Email</th><th>Role</th><th></th>
+  </tr></thead><tbody>
+  ${used.map(m => {
+    const p = profiles.find(p => p.id === m.user_id) || {};
+    return `<tr>
+      <td>${esc(p.full_name || '—')}${p.is_super_admin ? ' <span class="badge role">DLS</span>' : ''}</td>
+      <td>${esc(p.email || '—')}</td>
+      <td><select onchange="updateRole('${m.id}', this.value)">
+        <option value="staff" ${m.role === 'staff' ? 'selected' : ''}>Staff</option>
+        <option value="owner" ${m.role === 'owner' ? 'selected' : ''}>Owner</option>
+      </select></td>
+      <td style="white-space:nowrap">
+        <button class="btn-secondary btn-small" onclick="resetPassword('${m.user_id}', '${esc(p.email || '')}')">Reset PW</button>
+        <button class="btn-danger btn-small" onclick="removeMember('${m.id}', '${esc(p.email || '')}')">Remove</button>
+      </td>
+    </tr>`;
+  }).join('')}
+  </tbody></table>` : '<div class="muted">No users yet — add the first one below.</div>';
+
+  const memberIds = used.map(m => m.user_id);
+  document.getElementById('am_existing').innerHTML = '<option value="">— Add existing user —</option>' +
+    profiles.filter(p => !memberIds.includes(p.id)).map(p => `<option value="${p.id}">${esc(p.full_name || p.email)} (${esc(p.email)})</option>`).join('');
+}
+
+async function addExistingMember() {
+  const uid = document.getElementById('am_existing').value;
+  if (!uid) { notify('Pick a user first.', true); return; }
+  try {
+    await api('/rest/v1/memberships', { method: 'POST', body: JSON.stringify({
+      user_id: uid, company_id: openCompanyId, role: document.getElementById('am_role1').value }) });
+    await loadAll();
+    notify('User added ✓');
+  } catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+async function createMember() {
+  const name = document.getElementById('nu_name').value.trim();
+  const email = document.getElementById('nu_email').value.trim();
+  const pw = document.getElementById('nu_pw').value;
+  if (!name || !email || pw.length < 6) { notify('Fill in name, email, and a password of at least 6 characters.', true); return; }
+  try {
+    const uid = await api('/rest/v1/rpc/admin_create_user', { method: 'POST',
+      body: JSON.stringify({ p_email: email, p_password: pw, p_full_name: name }) });
+    await api('/rest/v1/memberships', { method: 'POST', body: JSON.stringify({
+      user_id: uid, company_id: openCompanyId, role: document.getElementById('am_role2').value }) });
+    document.getElementById('nu_name').value = ''; document.getElementById('nu_email').value = ''; document.getElementById('nu_pw').value = '';
+    await loadAll();
+    notify(`User ${email} created ✓ Give them the email + password to sign in.`);
+  } catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+async function updateRole(mid, role) {
+  try { await api(`/rest/v1/memberships?id=eq.${mid}`, { method: 'PATCH', body: JSON.stringify({ role }) }); await loadAll(); notify('Role updated ✓'); }
+  catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+async function removeMember(mid, email) {
+  if (!confirm(`Remove ${email} from this company? Their account stays; only access is removed.`)) return;
+  try { await api(`/rest/v1/memberships?id=eq.${mid}`, { method: 'DELETE' }); await loadAll(); notify('User removed ✓'); }
+  catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+async function resetPassword(uid, email) {
+  const pw = prompt(`New password for ${email} (min 6 characters):`);
+  if (!pw) return;
+  if (pw.length < 6) { notify('Password too short.', true); return; }
+  try { await api('/rest/v1/rpc/admin_set_password', { method: 'POST', body: JSON.stringify({ p_user: uid, p_password: pw }) }); notify('Password reset ✓'); }
+  catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+if (session) boot().catch(() => showLogin());
+else showLogin();
+</script>
+</body>
+</html>

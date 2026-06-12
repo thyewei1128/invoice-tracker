@@ -265,7 +265,7 @@
       <h1>Invoice Tracker</h1>
     </div>
   </div>
-  <button class="btn-secondary" id="syncBtn" onclick="syncNowOrSetup()">☁️ Sync: Off</button>
+  <button class="btn-secondary" id="syncBtn" onclick="refreshData(true)">⏳ Connecting…</button>
 </div>
 
 <div class="period-bar">
@@ -282,7 +282,7 @@
   </span>
 </div>
 
-<div id="storageWarn">⚠️ This window cannot save data permanently — your entries will disappear when you close it. Open the app in Safari or Chrome instead, or click <b>Backup</b> before closing to download your data.</div>
+<div id="lockBanner" style="display:none; background:var(--red-soft); color:var(--red); border-radius:10px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:12px">⛔ This company's subscription is suspended or expired — data is locked. Please contact DLS Technology to reactivate.</div>
 
 <div class="cards" id="summaryCards"></div>
 
@@ -335,9 +335,17 @@
   <div class="modal" id="detailModal"></div>
 </div>
 
-<!-- Sync modal -->
-<div class="overlay" id="syncOverlay">
-  <div class="modal" id="syncModal"></div>
+<!-- Login (cannot be dismissed — the app requires an account) -->
+<div class="overlay" id="loginOverlay">
+  <div class="modal" style="max-width:400px">
+    <div style="text-align:center; margin-bottom:4px"><img src="icon-192.png" alt="" style="width:56px; border-radius:14px"></div>
+    <h2 style="text-align:center; padding-right:0">Sign In</h2>
+    <div id="loginMsg" style="display:none; background:var(--red-soft); color:var(--red); border-radius:8px; padding:9px 12px; font-size:13px; margin-bottom:10px"></div>
+    <div class="field" style="margin-bottom:10px"><label>Email</label><input type="email" id="login_email" autocomplete="username" placeholder="you@company.com"></div>
+    <div class="field" style="margin-bottom:14px"><label>Password</label><input type="password" id="login_pw" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn-primary" id="loginBtn" style="width:100%; justify-content:center" onclick="doLogin()">Sign In</button>
+    <div style="margin-top:12px; font-size:12px; color:var(--muted); text-align:center">Accounts are created by DLS Technology.<br>Contact us to subscribe.</div>
+  </div>
 </div>
 
 <!-- Info modal -->
@@ -361,46 +369,191 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.13.1 (12 Jun 2026)';
-// testnet runs from the invoice-tracker-test repo: separate badge + separate saved data
+const APP_VERSION = '2.0.0-test (12 Jun 2026)';
+// testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
-const STORAGE_KEY = IS_TEST ? 'invoiceTrackerData_test' : 'invoiceTrackerData_v1';
-const SYNC_KEY = IS_TEST ? 'invoiceTrackerSync_test' : 'invoiceTrackerSync_v1';
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
 let cases = [];
-let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
+let adjustments = [];   // cash in/out: {id, date, type:'in'|'out', amount, note}
 let withdrawals = [];   // profit taken by partners: {id, date, partner, amount, note}
 let partners = ['Partner 1', 'Partner 2', 'Partner 3'];   // equal 3-way split
-let settings = {};      // app settings, e.g. editPassHash for unlocking closed cases
-let updatedAt = 0;      // last local edit time, used to decide which copy is newer
+let settings = {};      // company settings: agents, agentDefaults, editPassHash
 let editingId = null;
 
-/* ---------- persistence ---------- */
-function load() {
+/* ---------- cloud backend (Supabase) ---------- */
+const SUPA_URL = 'https://twuzrclcychwlklnhnzm.supabase.co';
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3dXpyY2xjeWNod2xrbG5obnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzk4MTcsImV4cCI6MjA5NjgxNTgxN30.Z11HlfmXFcl458ceTh7ZJ50J-BtyP8HRWiZNRE_z4Jk';
+const SESSION_KEY = IS_TEST ? 'invTrackSession_test' : 'invTrackSession_v1';
+const COMPANY_KEY = IS_TEST ? 'invTrackCompany_test' : 'invTrackCompany_v1';
+let session = null;
+try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
+let me = null, myMemberships = [], myCompanies = [];
+let companyId = null, userRole = 'staff', companyInfo = null, lastLoadAt = 0;
+
+function saveSession(s) {
+  session = s;
+  try { s ? localStorage.setItem(SESSION_KEY, JSON.stringify(s)) : localStorage.removeItem(SESSION_KEY); } catch (e) {}
+}
+
+async function refreshSession() {
+  const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=refresh_token', {
+    method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ refresh_token: session.refresh_token }) });
+  if (!res.ok) { saveSession(null); showLogin('Session expired — please sign in again.'); throw new Error('session expired'); }
+  const d = await res.json();
+  saveSession({ access_token: d.access_token, refresh_token: d.refresh_token, expires_at: Date.now() + (d.expires_in || 3600) * 1000, user: d.user });
+}
+
+async function api(path, opts = {}, retry = true) {
+  if (!session) throw new Error('not signed in');
+  if (Date.now() > (session.expires_at || 0) - 60000) await refreshSession();
+  const res = await fetch(SUPA_URL + path, { ...opts,
+    headers: { apikey: SUPA_ANON, Authorization: 'Bearer ' + session.access_token, 'Content-Type': 'application/json', ...(opts.headers || {}) } });
+  if (res.status === 401 && retry) { await refreshSession(); return api(path, opts, false); }
+  if (!res.ok) throw new Error(await res.text());
+  const txt = await res.text();
+  return txt ? JSON.parse(txt) : null;
+}
+
+// app object <-> database row
+const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
+  sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
+  invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
+  customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [] });
+const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
+  amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
+  referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
+  referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
+  supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [], updated_at: new Date().toISOString() });
+const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '' });
+const rowToWd = r => ({ id: r.id, date: r.w_date, partner: r.partner, amount: +r.amount, note: r.note || '' });
+
+function saveFail(e) {
+  console.error(e);
+  notify(navigator.onLine ? '⚠️ Not saved — server error. Please try again.' : '⚠️ Not saved — no internet connection.', true);
+}
+
+function upsertSettings() {
+  return api('/rest/v1/company_settings?on_conflict=company_id', {
+    method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' },
+    body: JSON.stringify({ company_id: companyId, partners, agents: settings.agents || [],
+      agent_defaults: settings.agentDefaults || {}, edit_pass_hash: settings.editPassHash || null }) });
+}
+
+/* ---------- sign in / account ---------- */
+function showLogin(msg) {
+  const m = document.getElementById('loginMsg');
+  if (m) { m.style.display = msg ? 'block' : 'none'; m.textContent = msg || ''; }
+  document.getElementById('loginOverlay').classList.add('show');
+  setCloudStatus('🔒 Signed out');
+}
+function hideLogin() { document.getElementById('loginOverlay').classList.remove('show'); }
+
+async function doLogin() {
+  const email = document.getElementById('login_email').value.trim();
+  const pw = document.getElementById('login_pw').value;
+  if (!email || !pw) { notify('Please enter email and password.', true); return; }
+  const btn = document.getElementById('loginBtn');
+  btn.disabled = true; btn.textContent = 'Signing in…';
   try {
-    const data = JSON.parse(localStorage.getItem(STORAGE_KEY));
-    if (Array.isArray(data)) { cases = data; adjustments = []; }      // old format
-    else {
-      cases = data?.cases || []; adjustments = data?.adjustments || []; updatedAt = data?.updatedAt || 0;
-      withdrawals = data?.withdrawals || [];
-      if (Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
-      settings = data?.settings || {};
-    }
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pw }) });
+    if (!res.ok) { notify('Wrong email or password.', true); return; }
+    const d = await res.json();
+    saveSession({ access_token: d.access_token, refresh_token: d.refresh_token, expires_at: Date.now() + (d.expires_in || 3600) * 1000, user: d.user });
+    document.getElementById('login_pw').value = '';
+    await bootCloud();
+  } catch (e) { console.error(e); notify('Could not sign in — check your internet.', true); }
+  finally { btn.disabled = false; btn.textContent = 'Sign In'; }
+}
+
+function logout() {
+  saveSession(null);
+  companyId = null; me = null; myMemberships = []; myCompanies = []; companyInfo = null;
+  cases = []; adjustments = []; withdrawals = []; settings = {}; partners = ['Partner 1', 'Partner 2', 'Partner 3'];
+  render();
+  showLogin();
+}
+
+async function bootCloud() {
+  setCloudStatus('⏳ Loading…');
+  const uid = session.user.id;
+  me = (await api(`/rest/v1/profiles?id=eq.${uid}&select=*`))[0] || null;
+  myMemberships = await api(`/rest/v1/memberships?user_id=eq.${uid}&select=role,company_id,companies(id,name,status,expires_at)`);
+  if (me && me.is_super_admin) myCompanies = await api('/rest/v1/companies?select=id,name,status,expires_at&order=name');
+  else myCompanies = myMemberships.map(m => m.companies).filter(Boolean);
+  if (!myCompanies.length) { showLogin('Your account has no company yet — please contact DLS Technology.'); return; }
+  let cid = null;
+  try { cid = localStorage.getItem(COMPANY_KEY); } catch (e) {}
+  if (!myCompanies.find(c => c.id === cid)) cid = myCompanies[0].id;
+  await selectCompany(cid);
+}
+
+async function selectCompany(cid) {
+  companyId = cid;
+  try { localStorage.setItem(COMPANY_KEY, cid); } catch (e) {}
+  const m = myMemberships.find(m => m.company_id === cid);
+  userRole = (me && me.is_super_admin) ? 'owner' : (m ? m.role : 'staff');
+  companyInfo = myCompanies.find(c => c.id === cid) || null;
+  hideLogin();
+  applyRoleUI();
+  await refreshData(false);
+  renderProfile();
+}
+
+const companySuspended = () => companyInfo && (companyInfo.status !== 'active' || (companyInfo.expires_at && companyInfo.expires_at < today()));
+
+async function refreshData(showMsg) {
+  if (!session || !companyId) return;
+  lastLoadAt = Date.now();
+  try {
+    setCloudStatus('⏳ Loading…');
+    const [cs, adj, wd, st] = await Promise.all([
+      api(`/rest/v1/cases?company_id=eq.${companyId}&select=*&order=case_date.desc&limit=5000`),
+      api(`/rest/v1/adjustments?company_id=eq.${companyId}&select=*&limit=5000`),
+      api(`/rest/v1/withdrawals?company_id=eq.${companyId}&select=*&limit=5000`).catch(() => []),
+      api(`/rest/v1/company_settings?company_id=eq.${companyId}&select=*`).catch(() => []),
+    ]);
+    cases = cs.map(rowToCase);
+    adjustments = adj.map(rowToAdj);
+    withdrawals = wd.map(rowToWd);
+    const s = st[0] || {};
+    if (Array.isArray(s.partners) && s.partners.length === 3) partners = s.partners;
+    settings = { agents: s.agents || [], agentDefaults: s.agent_defaults || {}, editPassHash: s.edit_pass_hash || null };
+    render();
+    setCloudStatus('ok');
+    const lb = document.getElementById('lockBanner');
+    if (lb) lb.style.display = companySuspended() ? 'block' : 'none';
+    if (showMsg) notify('Updated ✓');
+  } catch (e) {
+    console.error(e);
+    setCloudStatus('⚠️ Offline');
+    if (showMsg) notify('Could not load — check your internet.', true);
   }
-  catch (e) { cases = []; adjustments = []; }
-  // warn upfront if this environment cannot persist data
-  try { localStorage.setItem('__probe', '1'); localStorage.removeItem('__probe'); }
-  catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
 }
-const fullData = () => ({ cases, adjustments, withdrawals, partners, settings, updatedAt });
-function persist() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(fullData())); }
-  catch (e) { document.getElementById('storageWarn').style.display = 'block'; }
+
+function setCloudStatus(s) {
+  const b = document.getElementById('syncBtn');
+  if (!b) return;
+  if (s === 'ok') b.innerHTML = `🏢 ${esc(companyInfo ? companyInfo.name : '')} <span style="font-size:11px;font-weight:500;color:var(--muted)">⟳</span>`;
+  else b.textContent = s;
 }
-function save() {
-  updatedAt = Date.now();
-  persist();
-  scheduleCloudPush();
+
+function applyRoleUI() {
+  const owner = userRole === 'owner';
+  const fin = document.getElementById('bn-finance');
+  if (fin) fin.style.display = owner ? '' : 'none';
+}
+
+async function changeLoginPassword() {
+  const pw = document.getElementById('acc_pw').value;
+  if (pw.length < 6) { notify('Password must be at least 6 characters.', true); return; }
+  try {
+    await api('/auth/v1/user', { method: 'PUT', body: JSON.stringify({ password: pw }) });
+    document.getElementById('acc_pw').value = '';
+    notify('Login password changed ✓');
+  } catch (e) { saveFail(e); }
 }
 
 function notify(msg, isError) {
@@ -526,7 +679,8 @@ function renderSummary(list, rangeOn) {
   const tag = rangeOn ? '<span style="font-size:10px;color:var(--blue)"> · period</span>' : '';
 
   const cash = cashOnHand();
-  document.getElementById('summaryCards').innerHTML = `
+  // owner sees the money feature cards; staff sees case figures only
+  const featureCards = userRole === 'owner' ? `
     <div class="card feature" style="cursor:pointer" onclick="openCash()">
       <div class="label">🪙 Cash on Hand</div>
       <div class="value ${cash < 0 ? 'red' : 'green'}">${fmt(cash)}</div>
@@ -536,7 +690,8 @@ function renderSummary(list, rangeOn) {
       <div class="label">🤝 Balance Profit</div>
       <div class="value ${balanceProfit < 0 ? 'red' : 'green'}">${fmt(balanceProfit)}</div>
       <div style="font-size:11px;margin-top:4px">tap for partners &amp; withdrawals</div>
-    </div>
+    </div>` : '';
+  document.getElementById('summaryCards').innerHTML = featureCards + `
     <div class="card"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
     <div class="card"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
     <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
@@ -755,7 +910,7 @@ function updatePreview() {
     <div>Profit: <b>${pct(profitPct)} = ${fmt(amount * profitPct / 100)}</b></div>`;
 }
 
-function saveCaseForm() {
+async function saveCaseForm() {
   const date = document.getElementById('f_date').value;
   const company = document.getElementById('f_company').value.trim();
   const pic = currentAgent();
@@ -791,23 +946,30 @@ function saveCaseForm() {
   const data = { date, company, pic, amount, sellingPct, costPct, referralPct,
     referralName: document.getElementById('f_referralName').value.trim() };
 
-  if (editingId) {
-    Object.assign(cases.find(c => c.id === editingId), data);
-  } else {
-    cases.push({ id: uid(), invoiceIssued: false, referralPaid: false,
-      customerPayments: [], supplierPayments: [], clientPayouts: [], ...data });
-  }
+  const wasEditing = !!editingId;
+  try {
+    if (wasEditing) {
+      const local = cases.find(c => c.id === editingId);
+      await api(`/rest/v1/cases?id=eq.${editingId}`, { method: 'PATCH', body: JSON.stringify(caseToRow({ ...local, ...data })) });
+      Object.assign(local, data);
+    } else {
+      const draft = { invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [], ...data };
+      const rows = await api('/rest/v1/cases', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(caseToRow(draft)) });
+      cases.unshift(rowToCase(rows[0]));
+    }
+  } catch (e) { saveFail(e); return; }
 
   // remember this agent and their rates for next time
   if (!(settings.agents || []).includes(pic)) settings.agents = [...(settings.agents || []), pic];
   settings.agentDefaults = { ...(settings.agentDefaults || {}), [pic]: { sellingPct, costPct, referralPct } };
+  upsertSettings().catch(() => {});
 
-  save(); closeOverlay('formOverlay'); render();
-  notify(editingId ? 'Case updated.' : 'Case added — click Update on the row to key in payments.');
+  closeOverlay('formOverlay'); render();
+  notify(wasEditing ? 'Case updated ✓' : 'Case added — click Update on the row to key in payments.');
 }
 
 let pendingDelete = null;
-function deleteCase(id) {
+async function deleteCase(id) {
   const c0 = cases.find(c => c.id === id);
   if (c0 && computed(c0).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   if (pendingDelete !== id) {
@@ -818,9 +980,11 @@ function deleteCase(id) {
     return;
   }
   pendingDelete = null;
+  try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'DELETE' }); }
+  catch (e) { saveFail(e); render(); return; }
   cases = cases.filter(c => c.id !== id);
-  save(); render();
-  notify('Case deleted.');
+  render();
+  notify('Case deleted ✓');
 }
 
 /* ---------- detail / payments (draft — changes apply only when Save is clicked) ---------- */
@@ -924,11 +1088,13 @@ function renderDetail() {
     </div>`;
 }
 
-function saveDetail() {
+async function saveDetail() {
+  try { await api(`/rest/v1/cases?id=eq.${detailId}`, { method: 'PATCH', body: JSON.stringify(caseToRow(detailDraft)) }); }
+  catch (e) { saveFail(e); return; }
   const idx = cases.findIndex(s => s.id === detailId);
   if (idx >= 0) cases[idx] = detailDraft;
   detailId = null; detailDraft = null; detailDirty = false;
-  save(); render();
+  render();
   closeOverlay('detailOverlay');
   notify('Case saved ✓');
 }
@@ -945,7 +1111,7 @@ async function unlockDetail() {
     if (v.length < 4) { notify('Password must be at least 4 characters.', true); return; }
     settings.editPassHash = await hashText(v);
     editUnlocked = true;
-    save();
+    upsertSettings().catch(saveFail);
     notify('Password set ✓ Remember it — you need it to edit closed cases.');
     renderDetail();
   } else if (await hashText(v) === settings.editPassHash) {
@@ -964,15 +1130,17 @@ function draftToggle(key, val) {
   renderDetail();
 }
 
-function toggleInvoice(id) {
+async function toggleInvoice(id) {
   const c = cases.find(c => c.id === id);
   if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ invoice_issued: !c.invoiceIssued, updated_at: new Date().toISOString() }) }); }
+  catch (e) { saveFail(e); return; }
   c.invoiceIssued = !c.invoiceIssued;
-  save(); render();
+  render();
 }
 
 /* ---------- cash book (shows inside the Finance page) ---------- */
-function openCash() { financeTab = 'cash'; mobileGo('finance'); }
+function openCash() { financeTab = 'cash'; openFinance(); }
 
 function cashBookHTML() {
   const moves = cashMovements();
@@ -1014,22 +1182,23 @@ function cashBookHTML() {
     <div style="margin-top:12px"><button class="btn-secondary btn-small" onclick="exportCashCSV()">Export Cash CSV</button></div>`;
 }
 
-function addAdjustment() {
+async function addAdjustment() {
   const amount = Number(document.getElementById('adj_amount').value);
   if (!amount || amount <= 0) { notify('Please enter an amount.', true); return; }
-  adjustments.push({
-    id: uid(),
-    date: document.getElementById('adj_date').value || today(),
-    type: document.getElementById('adj_type').value,
-    amount,
-    note: document.getElementById('adj_note').value.trim(),
-  });
-  save(); render(); renderFinance();
+  const row = { company_id: companyId, adj_date: document.getElementById('adj_date').value || today(),
+    type: document.getElementById('adj_type').value, amount, note: document.getElementById('adj_note').value.trim() };
+  try {
+    const rows = await api('/rest/v1/adjustments', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+    adjustments.push(rowToAdj(rows[0]));
+  } catch (e) { saveFail(e); return; }
+  render(); renderFinance();
 }
 
-function deleteAdjustment(id) {
+async function deleteAdjustment(id) {
+  try { await api(`/rest/v1/adjustments?id=eq.${id}`, { method: 'DELETE' }); }
+  catch (e) { saveFail(e); return; }
   adjustments = adjustments.filter(a => a.id !== id);
-  save(); render(); renderFinance();
+  render(); renderFinance();
 }
 
 function exportCashCSV() {
@@ -1044,7 +1213,7 @@ function exportCashCSV() {
 }
 
 /* ---------- profit withdrawal (shows inside the Finance page) ---------- */
-function openProfit() { financeTab = 'profit'; mobileGo('finance'); }
+function openProfit() { financeTab = 'profit'; openFinance(); }
 
 function profitHTML() {
   const range = getRange();
@@ -1106,34 +1275,42 @@ function profitHTML() {
     </div>`;
 }
 
-function addWithdrawal() {
+async function addWithdrawal() {
   const amount = Number(document.getElementById('w_amount').value);
   if (!amount || amount <= 0) { notify('Please enter the withdrawal amount.', true); return; }
-  withdrawals.push({
-    id: uid(),
-    date: document.getElementById('w_date').value || today(),
-    partner: document.getElementById('w_partner').value,
-    amount,
-    note: document.getElementById('w_note').value.trim(),
-  });
-  save(); render(); renderFinance();
-  notify('Withdrawal recorded.');
+  const row = { company_id: companyId, w_date: document.getElementById('w_date').value || today(),
+    partner: document.getElementById('w_partner').value, amount, note: document.getElementById('w_note').value.trim() };
+  try {
+    const rows = await api('/rest/v1/withdrawals', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+    withdrawals.push(rowToWd(rows[0]));
+  } catch (e) { saveFail(e); return; }
+  render(); renderFinance();
+  notify('Withdrawal recorded ✓');
 }
 
-function deleteWithdrawal(id) {
+async function deleteWithdrawal(id) {
+  try { await api(`/rest/v1/withdrawals?id=eq.${id}`, { method: 'DELETE' }); }
+  catch (e) { saveFail(e); return; }
   withdrawals = withdrawals.filter(w => w.id !== id);
-  save(); render(); renderFinance();
+  render(); renderFinance();
 }
 
-function savePartners() {
+async function savePartners() {
   const newNames = [0, 1, 2].map(i => document.getElementById('p_name_' + i).value.trim() || `Partner ${i + 1}`);
-  // keep old withdrawals attached to the renamed partner
-  partners.forEach((oldName, i) => {
-    if (oldName !== newNames[i]) withdrawals.forEach(w => { if (w.partner === oldName) w.partner = newNames[i]; });
-  });
-  partners = newNames;
-  save(); render(); renderFinance();
-  notify('Partner names saved.');
+  const renames = [];
+  partners.forEach((oldName, i) => { if (oldName !== newNames[i]) renames.push([oldName, newNames[i]]); });
+  try {
+    // keep old withdrawals attached to the renamed partner
+    for (const [o, n] of renames) {
+      await api(`/rest/v1/withdrawals?company_id=eq.${companyId}&partner=eq.${encodeURIComponent(o)}`,
+        { method: 'PATCH', body: JSON.stringify({ partner: n }) });
+    }
+    partners = newNames;
+    await upsertSettings();
+  } catch (e) { saveFail(e); return; }
+  withdrawals.forEach(w => { const r = renames.find(x => x[0] === w.partner); if (r) w.partner = r[1]; });
+  render(); renderFinance();
+  notify('Partner names saved ✓');
 }
 
 function addTxn(listKey, presetAmount) {
@@ -1162,26 +1339,35 @@ function download(filename, text, type) {
 }
 
 function exportJSON() {
-  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify(fullData(), null, 2), 'application/json');
+  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify({ cases, adjustments, withdrawals, partners, settings }, null, 2), 'application/json');
 }
 
+// import a backup file: ADDS its records into the current company's cloud data
 function importJSON(ev) {
   const file = ev.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = () => {
+  reader.onload = async () => {
     try {
       const data = JSON.parse(reader.result);
       const newCases = Array.isArray(data) ? data : data?.cases;
       if (!Array.isArray(newCases)) throw new Error('Invalid format');
-      cases = newCases;
-      adjustments = (Array.isArray(data) ? [] : data?.adjustments) || [];
-      withdrawals = (Array.isArray(data) ? [] : data?.withdrawals) || [];
-      if (!Array.isArray(data) && Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
-      if (!Array.isArray(data) && data?.settings) settings = data.settings;
-      save(); render();
-      notify(`Restored ${newCases.length} cases from backup.`);
-    } catch (e) { notify('Could not read that backup file.', true); }
+      notify('Uploading backup into the cloud…');
+      if (newCases.length) await api('/rest/v1/cases', { method: 'POST', body: JSON.stringify(newCases.map(c => caseToRow(c))) });
+      const adj = (Array.isArray(data) ? [] : data?.adjustments) || [];
+      if (adj.length) await api('/rest/v1/adjustments', { method: 'POST',
+        body: JSON.stringify(adj.map(a => ({ company_id: companyId, adj_date: a.date || null, type: a.type === 'out' ? 'out' : 'in', amount: a.amount || 0, note: a.note || '' }))) });
+      const wd = (Array.isArray(data) ? [] : data?.withdrawals) || [];
+      if (wd.length) await api('/rest/v1/withdrawals', { method: 'POST',
+        body: JSON.stringify(wd.map(w => ({ company_id: companyId, w_date: w.date || null, partner: w.partner || '', amount: w.amount || 0, note: w.note || '' }))) });
+      if (!Array.isArray(data)) {
+        if (Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
+        if (data?.settings) settings = { agents: data.settings.agents || [], agentDefaults: data.settings.agentDefaults || {}, editPassHash: data.settings.editPassHash || null };
+        await upsertSettings();
+      }
+      await refreshData(false);
+      notify(`Imported ${newCases.length} cases into ${companyInfo ? companyInfo.name : 'your company'} ✓`);
+    } catch (e) { console.error(e); notify('Import failed — check the file and try again.', true); }
   };
   reader.readAsText(file);
   ev.target.value = '';
@@ -1207,188 +1393,15 @@ function exportCSV() {
   download(`invoice-tracker-${today()}.csv`, csv, 'text/csv');
 }
 
-/* ---------- cloud sync (private GitHub Gist) ---------- */
-const GIST_FILE = 'invoice-tracker-data.json';
-let syncCfg = {};
-try { syncCfg = JSON.parse(localStorage.getItem(SYNC_KEY)) || {}; } catch (e) { syncCfg = {}; }
-let pushTimer = null;
-let lastPullAt = 0;
-
-function saveSyncCfg() {
-  try { localStorage.setItem(SYNC_KEY, JSON.stringify(syncCfg)); } catch (e) {}
-}
-
-const fmtSyncTime = ts => {
-  if (!ts) return '';
-  const d = new Date(ts);
-  const hm = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${hm}`;
-};
-
-function setSyncStatus(s) {
-  const b = document.getElementById('syncBtn');
-  if (!b) return;
-  if (s === 'ok' && syncCfg.lastSyncAt) b.innerHTML = `☁️ Synced ✓ <span style="font-size:11px;font-weight:500;color:var(--muted)">${fmtSyncTime(syncCfg.lastSyncAt)}</span>`;
-  else b.textContent = { off: '☁️ Sync: Off', syncing: '⏳ Syncing…', ok: '☁️ Synced ✓', error: '⚠️ Sync Error' }[s] || '☁️ Sync';
-}
-
-// toolbar button: one tap = sync now; if not connected yet, open settings
-function syncNowOrSetup() {
-  if (syncCfg.token && syncCfg.gistId) cloudPull(true);
-  else openSync();
-}
-
-async function gh(path, opts = {}) {
-  const res = await fetch('https://api.github.com' + path, {
-    ...opts,
-    headers: { 'Authorization': 'token ' + syncCfg.token, 'Accept': 'application/vnd.github+json', ...(opts.headers || {}) },
-  });
-  if (!res.ok) throw new Error('GitHub ' + res.status);
-  return res.json();
-}
-
-function scheduleCloudPush() {
-  if (!syncCfg.token || !syncCfg.gistId) return;
-  clearTimeout(pushTimer);
-  setSyncStatus('syncing');
-  pushTimer = setTimeout(cloudPush, 1500);   // wait for typing to stop, then push once
-}
-
-async function cloudPush() {
-  if (!syncCfg.token || !syncCfg.gistId) return;
-  try {
-    setSyncStatus('syncing');
-    await gh('/gists/' + syncCfg.gistId, {
-      method: 'PATCH',
-      body: JSON.stringify({ files: { [GIST_FILE]: { content: JSON.stringify(fullData()) } } }),
-    });
-    syncCfg.lastSyncAt = Date.now();
-    saveSyncCfg();
-    setSyncStatus('ok');
-  } catch (e) {
-    setSyncStatus('error');
-    notify('Could not sync to cloud — will retry on your next change.', true);
-  }
-}
-
-async function cloudPull(showMsg) {
-  if (!syncCfg.token || !syncCfg.gistId) return;
-  lastPullAt = Date.now();
-  try {
-    setSyncStatus('syncing');
-    const g = await gh('/gists/' + syncCfg.gistId);
-    const content = g.files?.[GIST_FILE]?.content;
-    if (content) {
-      const data = JSON.parse(content);
-      if ((data.updatedAt || 0) > (updatedAt || 0)) {
-        cases = data.cases || [];
-        adjustments = data.adjustments || [];
-        withdrawals = data.withdrawals || [];
-        if (Array.isArray(data.partners) && data.partners.length === 3) partners = data.partners;
-        settings = data.settings || settings;
-        updatedAt = data.updatedAt || 0;
-        persist(); render();
-        if (showMsg) notify('Loaded newer data from cloud.');
-      } else if ((updatedAt || 0) > (data.updatedAt || 0)) {
-        await cloudPush();
-        return;
-      }
-    }
-    syncCfg.lastSyncAt = Date.now();
-    saveSyncCfg();
-    setSyncStatus('ok');
-  } catch (e) {
-    setSyncStatus('error');
-    if (showMsg) notify('Could not reach the cloud — check internet or sync key.', true);
-  }
-}
-
-async function connectSync() {
-  const token = document.getElementById('sync_token').value.trim();
-  if (!token) { notify('Please paste your sync key first.', true); return; }
-  syncCfg = { token };
-  try {
-    setSyncStatus('syncing');
-    // reuse this account's existing data gist if there is one, otherwise create it
-    let gistId = null;
-    const gists = await gh('/gists?per_page=100');
-    for (const g of gists) if (g.files && g.files[GIST_FILE]) { gistId = g.id; break; }
-    if (!gistId) {
-      const g = await gh('/gists', {
-        method: 'POST',
-        body: JSON.stringify({ description: 'Invoice Tracker data (private)', public: false,
-          files: { [GIST_FILE]: { content: JSON.stringify(fullData()) } } }),
-      });
-      gistId = g.id;
-    }
-    syncCfg.gistId = gistId;
-    saveSyncCfg();
-    await cloudPull(true);
-    notify('Sync connected ✓ This device now shares data with your other devices.');
-    renderProfile();
-    openSync();
-  } catch (e) {
-    syncCfg = {};
-    saveSyncCfg();
-    setSyncStatus('off');
-    notify('Could not connect — please check the sync key and try again.', true);
-  }
-}
-
-function disconnectSync() {
-  syncCfg = {};
-  saveSyncCfg();
-  setSyncStatus('off');
-  notify('Sync turned off. Data stays on this device only.');
-  renderProfile();
-  openSync();
-}
-
-function openSync() {
-  closeAllOverlays();
-  const connected = !!(syncCfg.token && syncCfg.gistId);
-  document.getElementById('syncModal').innerHTML = (connected ? `
-    <h2>☁️ Sync is ON</h2>
-    <div style="font-size:14px;line-height:1.6">
-      <p>This device shares data with every other device connected with the same sync key.
-      Changes upload automatically a moment after you make them, and the app checks for
-      newer data every time you open or return to it.</p>
-      <p style="margin-top:10px;color:var(--muted);font-size:13px">Your data lives in a <b>private</b> file on your own GitHub account — only someone with your sync key can see it.
-      Tip: key in on one device at a time; if two devices are edited at the same time while offline, the most recent change wins.</p>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-danger" onclick="disconnectSync()">Turn Off Sync</button>
-      <button class="btn-secondary" onclick="cloudPull(true)">Sync Now</button>
-      <button class="btn-primary" onclick="closeOverlay('syncOverlay')">Done</button>
-    </div>` : `
-    <h2>☁️ Turn On Sync</h2>
-    <div style="font-size:14px;line-height:1.7">
-      <p>Sync lets you see the same data on your Mac, phone, and office computer. It uses a private file on your own GitHub account — free, and only you can read it.</p>
-      <p style="margin-top:12px"><b>Step 1 — Get your sync key (one time):</b><br>
-      <a href="https://github.com/settings/tokens/new?scopes=gist&description=Invoice+Tracker+Sync" target="_blank" rel="noopener" style="color:var(--blue);font-weight:600">Click here to open GitHub</a>
-      — log in if asked, scroll to the bottom, press the green <b>Generate token</b> button, then copy the code that starts with <b>ghp_</b>. (Set Expiration to "No expiration" so you don't have to redo this.)</p>
-      <p style="margin-top:12px"><b>Step 2 — Paste it here:</b></p>
-      <div class="txn-form" style="margin-top:6px">
-        <input type="password" id="sync_token" class="note" placeholder="Paste sync key (ghp_…)" autocomplete="off">
-        <button class="btn-primary" onclick="connectSync()">Connect</button>
-      </div>
-      <p style="margin-top:12px;color:var(--muted);font-size:13px">Do the same on each device (same key). Keep the key private — anyone who has it can read your records. The key is stored only on this device.</p>
-    </div>
-    <div class="modal-actions">
-      <button class="btn-secondary" onclick="closeOverlay('syncOverlay')">Cancel</button>
-    </div>`) + `<button class="modal-x" onclick="closeOverlay('syncOverlay')">✕</button>`;
-  document.getElementById('syncOverlay').classList.add('show');
-}
-
 // pull fresh data when you come back to the app (e.g. switching from phone to Mac)
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden && syncCfg.gistId && Date.now() - lastPullAt > 30000) cloudPull();
+  if (!document.hidden && session && companyId && Date.now() - lastLoadAt > 30000) refreshData(false);
 });
 
 /* ---------- info pop-ups ---------- */
 const INFO = {
   app: { t: 'About this system', b: 'Track each case through 4 steps: <b>1)</b> you issue the invoice → <b>2)</b> customer pays you → <b>3)</b> supplier passes you cash → <b>4)</b> you pay cash to your client.<br><br>Partial payments are supported at every step. A case closes automatically once the invoice is issued, all three payments are complete, and the referral (if any) is paid.<br><br>Use the period buttons (Today / 7 Days / 1 Month…) to filter the dashboard and case list by date.' },
-  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. The ☁️ button syncs now and shows the last sync time — sync settings, Backup, Restore and CSV export are all in ⚙️ Profile.' },
+  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. Data saves to the cloud automatically — the 🏢 button at the top refreshes it. Backup, Restore and CSV export are in ⚙️ Profile.' },
   cash: { t: 'Cash Book', b: 'Shows every cash movement with a running balance: cash IN from suppliers, cash OUT to clients, referral fees, profit withdrawals, and your own money in/out.<br><br>Customer invoice payments are bank transfers, so they are <b>not</b> counted in cash on hand.<br><br>If the balance is negative, that is your own money currently fronted.' },
   profit: { t: 'Profit & Partners', b: 'Total profit comes from <b>closed cases only</b> — a case must be fully collected and paid out before its profit enters the pool.<br><br>Profit splits equally between the 3 partners. Record each withdrawal here; it automatically appears as cash out in the Cash Book.<br><br>Balance Profit = total profit − total withdrawn.' },
 };
@@ -1405,18 +1418,27 @@ function showInfo(key) {
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
 function closeAllOverlays() {
-  document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
+  document.querySelectorAll('.overlay.show').forEach(o => {
+    if (o.id === 'loginOverlay') return;                       // login cannot be dismissed
+    if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show');
+  });
 }
 document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => {
-  if (e.target === o) { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
+  if (e.target === o && o.id !== 'loginOverlay') { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); }
 }));
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => { if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show'); });
+  if (e.key === 'Escape') document.querySelectorAll('.overlay.show').forEach(o => {
+    if (o.id === 'loginOverlay') return;
+    if (o.id === 'detailOverlay') closeDetail(); else o.classList.remove('show');
+  });
 });
 
 /* ---------- finance & profile pages ---------- */
 let financeTab = 'cash';   // which section shows at the bottom of the Finance page
-function openFinance() { mobileGo('finance'); }
+function openFinance() {
+  if (userRole !== 'owner') { notify('Owner access only.', true); return; }
+  mobileGo('finance');
+}
 function openProfile() { mobileGo('profile'); }
 function setFinTab(t) { financeTab = t; renderFinance(); }
 
@@ -1439,19 +1461,29 @@ function renderFinance() {
 }
 
 function renderProfile() {
-  const connected = !!(syncCfg.token && syncCfg.gistId);
+  const multi = myCompanies.length > 1;
   document.getElementById('profilePage').innerHTML = `
     <div class="card">
     <button class="btn-secondary btn-small page-back" style="float:right" onclick="mobileGo('home')">← Back</button>
     <h2>👤 Profile</h2>
 
     <div class="leg" style="margin-bottom:12px">
-      <h3>☁️ Sync</h3>
-      <div style="font-size:13px;color:var(--muted);margin:6px 0 10px">${connected
-        ? `ON — shares data with your other devices.${syncCfg.lastSyncAt ? ` Last synced: <b>${fmtSyncTime(syncCfg.lastSyncAt)}</b>` : ''}`
-        : 'OFF — data stays on this device only.'}</div>
-      ${connected ? '<button class="btn-primary btn-small" onclick="cloudPull(true)">Sync Now</button> ' : ''}
-      <button class="btn-secondary btn-small" onclick="openSync()">Sync Settings</button>
+      <h3>🔐 Account</h3>
+      <div style="font-size:13px;color:var(--muted);margin:6px 0 10px">
+        Signed in as <b>${esc(me?.full_name || '')}</b> (${esc(session?.user?.email || '')})<br>
+        Company: <b>${esc(companyInfo?.name || '-')}</b> · Role: <b>${userRole === 'owner' ? 'Owner' : 'Staff'}</b>${me?.is_super_admin ? ' · DLS Super Admin' : ''}
+      </div>
+      ${multi ? `<div class="txn-form" style="margin-bottom:8px">
+        <select id="companySwitch" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+          ${myCompanies.map(c => `<option value="${c.id}" ${c.id === companyId ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}
+        </select>
+        <button class="btn-secondary btn-small" onclick="selectCompany(document.getElementById('companySwitch').value)">Switch Company</button>
+      </div>` : ''}
+      <div class="txn-form" style="margin-bottom:8px">
+        <input type="password" id="acc_pw" class="amt" placeholder="New login password" autocomplete="new-password">
+        <button class="btn-secondary btn-small" onclick="changeLoginPassword()">Change Password</button>
+      </div>
+      <button class="btn-danger btn-small" onclick="logout()">Log Out</button>
     </div>
 
     <div class="leg" style="margin-bottom:12px">
@@ -1472,11 +1504,6 @@ function renderProfile() {
       </div>
     </div>
 
-    <div class="leg" style="margin-bottom:12px;background:var(--accent-soft)">
-      <h3>🔐 Login &amp; Access Control</h3>
-      <div style="font-size:13px;color:var(--muted);margin-top:6px">Coming soon — user accounts with company access control, managed from the admin panel.</div>
-    </div>
-
     <div class="leg">
       <h3>ℹ️ About</h3>
       <div style="font-size:13px;line-height:1.7;margin-top:6px">${INFO.app.b}</div>
@@ -1494,7 +1521,7 @@ async function changeEditPass() {
   if (nw.length < 4) { notify('New password must be at least 4 characters.', true); return; }
   settings.editPassHash = await hashText(nw);
   editUnlocked = false;
-  save();
+  try { await upsertSettings(); } catch (e) { saveFail(e); return; }
   notify('Edit password updated ✓');
   renderProfile();
 }
@@ -1503,6 +1530,7 @@ async function changeEditPass() {
 const VIEWS = ['home', 'cases', 'finance', 'profile'];
 function mobileGo(v) {
   if (!VIEWS.includes(v)) v = 'home';
+  if (v === 'finance' && userRole !== 'owner') v = 'home';
   closeAllOverlays();
   VIEWS.forEach(k => {
     document.body.classList.toggle('m-' + k, v === k);
@@ -1532,13 +1560,12 @@ document.addEventListener('touchend', () => {
   ptrStartY = null; ptrReady = false;
 });
 
-load();
 render();
 let savedView = 'home';
 try { savedView = localStorage.getItem('invTrackView') || 'home'; } catch (e) {}
 mobileGo(savedView);
-if (syncCfg.token && syncCfg.gistId) { setSyncStatus('syncing'); cloudPull(); }
-else setSyncStatus('off');
+if (session) bootCloud().catch(e => { console.error(e); showLogin('Could not connect — pull down to retry, or sign in again.'); });
+else showLogin();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
