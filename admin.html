@@ -103,6 +103,16 @@
         <button class="btn-accent" onclick="createCompany()">+ Create</button>
       </div>
       <div class="muted" style="margin-top:6px">Base plan = 3 users. Click a company to manage it on the right →</div>
+
+      <div style="border-top:1px solid var(--border); margin-top:14px; padding-top:12px">
+        <h3>👤 My Account</h3>
+        <div class="muted" id="accInfo" style="margin:4px 0 8px"></div>
+        <div class="row-form" style="margin-top:0">
+          <input type="password" id="adm_pw" placeholder="New password (min 6)" autocomplete="new-password" style="flex:1; min-width:140px">
+          <button class="btn-secondary btn-small" onclick="changeAdminPassword()">Change Password</button>
+        </div>
+        <div class="muted" style="margin-top:6px">Admin Portal version <b id="admVer"></b> · latest app build: <b>see Users → App Version</b></div>
+      </div>
     </div>
 
     <!-- RIGHT: selected company -->
@@ -152,6 +162,7 @@
 <script>
 const SUPA_URL = 'https://twuzrclcychwlklnhnzm.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3dXpyY2xjeWNod2xrbG5obnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzk4MTcsImV4cCI6MjA5NjgxNTgxN30.Z11HlfmXFcl458ceTh7ZJ50J-BtyP8HRWiZNRE_z4Jk';
+const ADMIN_VERSION = '1.1.0 (12 Jun 2026)';
 const SESSION_KEY = 'invAdminSession_v1';
 let session = null;
 try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
@@ -226,7 +237,25 @@ async function boot() {
   if (!meRows.length || !meRows[0].is_super_admin) { saveSession(null); showLogin('This dashboard is for the DLS super admin only.'); return; }
   document.getElementById('loginCard').style.display = 'none';
   document.getElementById('app').style.display = 'block';
+  document.getElementById('accInfo').textContent = `Signed in as ${session.user.email}`;
+  document.getElementById('admVer').textContent = ADMIN_VERSION;
   await loadAll();
+}
+
+const fmtDT = ts => {
+  if (!ts) return '';
+  const d = new Date(ts), p = n => String(n).padStart(2, '0');
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+async function changeAdminPassword() {
+  const pw = document.getElementById('adm_pw').value;
+  if (pw.length < 6) { notify('Password must be at least 6 characters.', true); return; }
+  try {
+    await api('/auth/v1/user', { method: 'PUT', body: JSON.stringify({ password: pw }) });
+    document.getElementById('adm_pw').value = '';
+    notify('Admin password changed ✓');
+  } catch (e) { notify('Failed: ' + errMsg(e), true); }
 }
 
 async function loadAll() {
@@ -317,13 +346,14 @@ function renderMembers() {
   const used = memberships.filter(m => m.company_id === c.id);
   document.getElementById('seatTitle').textContent = `👥 Users (${used.length} of ${c.max_users} seats used)`;
   document.getElementById('membersBox').innerHTML = used.length ? `<table><thead><tr>
-    <th>Name</th><th>Email</th><th>Role</th><th></th>
+    <th>Name</th><th>Email</th><th>App Version</th><th>Role</th><th></th>
   </tr></thead><tbody>
   ${used.map(m => {
     const p = profiles.find(p => p.id === m.user_id) || {};
     return `<tr>
       <td>${esc(p.full_name || '—')}${p.is_super_admin ? ' <span class="badge role">DLS</span>' : ''}</td>
       <td>${esc(p.email || '—')}</td>
+      <td>${esc(p.app_version || '—')}<div class="muted">${p.last_seen_at ? 'seen ' + fmtDT(p.last_seen_at) : 'never signed in'}</div></td>
       <td><select onchange="updateRole('${m.id}', this.value)">
         <option value="staff" ${m.role === 'staff' ? 'selected' : ''}>Staff</option>
         <option value="owner" ${m.role === 'owner' ? 'selected' : ''}>Owner</option>
