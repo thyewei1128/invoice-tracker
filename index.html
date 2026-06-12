@@ -361,9 +361,12 @@
 </nav>
 
 <script>
-const APP_VERSION = '1.13.0 (12 Jun 2026)';
-const STORAGE_KEY = 'invoiceTrackerData_v1';
-const SYNC_KEY = 'invoiceTrackerSync_v1';
+const APP_VERSION = '1.13.1 (12 Jun 2026)';
+// testnet runs from the invoice-tracker-test repo: separate badge + separate saved data
+const IS_TEST = location.pathname.includes('-test');
+const STORAGE_KEY = IS_TEST ? 'invoiceTrackerData_test' : 'invoiceTrackerData_v1';
+const SYNC_KEY = IS_TEST ? 'invoiceTrackerSync_test' : 'invoiceTrackerSync_v1';
+if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
 let cases = [];
 let adjustments = [];   // own money in/out: {id, date, type:'in'|'out', amount, note}
 let withdrawals = [];   // profit taken by partners: {id, date, partner, amount, note}
