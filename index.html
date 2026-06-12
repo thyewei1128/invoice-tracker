@@ -287,6 +287,7 @@
 </div>
 
 <div id="lockBanner" style="display:none; background:var(--red-soft); color:var(--red); border-radius:10px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:12px">⛔ This company's subscription is suspended or expired — data is locked. Please contact DLS Technology to reactivate.</div>
+<div id="renewBanner" style="display:none; background:var(--amber-soft); color:var(--amber); border-radius:10px; padding:12px 14px; font-size:13px; font-weight:600; margin-bottom:12px"></div>
 
 <div class="cards" id="summaryCards"></div>
 
@@ -388,7 +389,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.3.0 (12 Jun 2026)';
+const APP_VERSION = '2.4.0 (12 Jun 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -525,6 +526,13 @@ async function selectCompany(cid) {
 
 const companySuspended = () => companyInfo && (companyInfo.status !== 'active' || (companyInfo.expires_at && companyInfo.expires_at < today()));
 
+// every data action checks this first: suspended = read-only nothing, with a clear message
+function guardActive() {
+  if (!session || !companyId) { notify('Please sign in first.', true); return false; }
+  if (companySuspended()) { notify('⛔ Subscription suspended or expired — contact DLS Technology.', true); return false; }
+  return true;
+}
+
 async function refreshData(showMsg) {
   if (!session || !companyId) return;
   lastLoadAt = Date.now();
@@ -546,6 +554,17 @@ async function refreshData(showMsg) {
     setCloudStatus('ok');
     const lb = document.getElementById('lockBanner');
     if (lb) lb.style.display = companySuspended() ? 'block' : 'none';
+    // renewal reminder: warn during the last 7 days before expiry
+    const rb = document.getElementById('renewBanner');
+    if (rb) {
+      let msg = '';
+      if (!companySuspended() && companyInfo && companyInfo.expires_at) {
+        const days = Math.ceil((new Date(companyInfo.expires_at + 'T00:00:00') - Date.now()) / 86400000);
+        if (days >= 0 && days <= 7) msg = `⏰ Subscription expires on ${fmtDate(companyInfo.expires_at)} (${days <= 0 ? 'today' : days + (days === 1 ? ' day' : ' days') + ' left'}) — contact DLS Technology to renew.`;
+      }
+      rb.style.display = msg ? 'block' : 'none';
+      rb.textContent = msg;
+    }
     if (showMsg) notify('Updated ✓');
   } catch (e) {
     console.error(e);
@@ -964,6 +983,7 @@ function agentSelectChanged() {
 }
 
 function openCaseForm(id) {
+  if (!guardActive()) return;
   const c = id ? cases.find(c => c.id === id) : null;
   if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   closeAllOverlays();
@@ -1062,6 +1082,7 @@ async function saveCaseForm() {
 
 let pendingDelete = null;
 async function deleteCase(id) {
+  if (!guardActive()) return;
   const c0 = cases.find(c => c.id === id);
   if (c0 && computed(c0).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   if (pendingDelete !== id) {
@@ -1168,6 +1189,7 @@ function renderDetail() {
 }
 
 async function saveDetail() {
+  if (!guardActive()) return;
   try { await api(`/rest/v1/cases?id=eq.${detailId}`, { method: 'PATCH', body: JSON.stringify(caseToRow(detailDraft)) }); }
   catch (e) { saveFail(e); return; }
   const idx = cases.findIndex(s => s.id === detailId);
@@ -1207,6 +1229,7 @@ function draftToggle(key, val) {
 }
 
 async function toggleInvoice(id) {
+  if (!guardActive()) return;
   const c = cases.find(c => c.id === id);
   if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
   try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ invoice_issued: !c.invoiceIssued, updated_at: new Date().toISOString() }) }); }
@@ -1259,6 +1282,7 @@ function cashBookHTML() {
 }
 
 async function addAdjustment() {
+  if (!guardActive()) return;
   const amount = Number(document.getElementById('adj_amount').value);
   if (!amount || amount <= 0) { notify('Please enter an amount.', true); return; }
   const row = { company_id: companyId, adj_date: document.getElementById('adj_date').value || today(),
@@ -1341,6 +1365,7 @@ function profitHTML() {
 }
 
 async function addWithdrawal() {
+  if (!guardActive()) return;
   const amount = Number(document.getElementById('w_amount').value);
   if (!amount || amount <= 0) { notify('Please enter the withdrawal amount.', true); return; }
   const row = { company_id: companyId, w_date: document.getElementById('w_date').value || today(),
@@ -1361,6 +1386,7 @@ async function deleteWithdrawal(id) {
 }
 
 async function savePartners() {
+  if (!guardActive()) return;
   const newNames = [0, 1, 2].map(i => document.getElementById('p_name_' + i).value.trim() || `Partner ${i + 1}`);
   const renames = [];
   partners.forEach((oldName, i) => { if (oldName !== newNames[i]) renames.push([oldName, newNames[i]]); });
@@ -1404,6 +1430,7 @@ function download(filename, text, type) {
 }
 
 function exportJSON() {
+  if (!guardActive()) return;
   const name = (companyInfo ? companyInfo.name : 'company').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   download(`${name}-backup-${today()}.json`, JSON.stringify({ cases, adjustments, withdrawals, partners, settings }, null, 2), 'application/json');
   notify('Backup downloaded ✓');
@@ -1411,6 +1438,7 @@ function exportJSON() {
 
 // import a backup file: ADDS its records into the current company
 function importJSON(ev) {
+  if (!guardActive()) { ev.target.value = ''; return; }
   const file = ev.target.files[0];
   if (!file) return;
   const reader = new FileReader();
