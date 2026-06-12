@@ -295,7 +295,6 @@
     <option value="closed">Closed</option>
   </select>
   <button class="btn-secondary" id="profileBtn" onclick="openProfile()">⚙️ Profile</button>
-  <input type="file" id="importFile" accept=".json" style="display:none" onchange="importJSON(event)">
   <button class="btn-accent" onclick="openCaseForm()">+ New Case</button>
 </div>
 
@@ -385,7 +384,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.1.0-test (12 Jun 2026)';
+const APP_VERSION = '2.2.0-test (12 Jun 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1247,7 +1246,7 @@ function cashBookHTML() {
       ${moves.length ? `<table><thead><tr><th>Date</th><th>Description</th><th class="num">Amount</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<div style="color:var(--muted);font-size:13px">No cash movements yet. They appear automatically when you record supplier payments and client payouts in each case.</div>'}
     </div>
 
-    <div style="margin-top:12px"><button class="btn-secondary btn-small" onclick="exportCashCSV()">Export Cash CSV</button></div>`;
+    `;
 }
 
 async function addAdjustment() {
@@ -1267,17 +1266,6 @@ async function deleteAdjustment(id) {
   catch (e) { saveFail(e); return; }
   adjustments = adjustments.filter(a => a.id !== id);
   render(); renderFinance();
-}
-
-function exportCashCSV() {
-  let running = 0;
-  const rows = [['Date', 'Description', 'Note', 'Cash In', 'Cash Out', 'Balance']];
-  for (const m of cashMovements()) {
-    running += m.amount;
-    rows.push([fmtDate(m.date), m.label, m.note, m.amount >= 0 ? m.amount.toFixed(2) : '', m.amount < 0 ? (-m.amount).toFixed(2) : '', running.toFixed(2)]);
-  }
-  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(`cash-book-${today()}.csv`, csv, 'text/csv');
 }
 
 /* ---------- profit withdrawal (shows inside the Finance page) ---------- */
@@ -1397,70 +1385,6 @@ function deleteTxn(listKey, txnId) {
   renderDetail();
 }
 
-/* ---------- export / import ---------- */
-function download(filename, text, type) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([text], { type }));
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-function exportJSON() {
-  download(`invoice-tracker-backup-${today()}.json`, JSON.stringify({ cases, adjustments, withdrawals, partners, settings }, null, 2), 'application/json');
-}
-
-// import a backup file: ADDS its records into the current company's cloud data
-function importJSON(ev) {
-  const file = ev.target.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = async () => {
-    try {
-      const data = JSON.parse(reader.result);
-      const newCases = Array.isArray(data) ? data : data?.cases;
-      if (!Array.isArray(newCases)) throw new Error('Invalid format');
-      notify('Uploading backup into the cloud…');
-      if (newCases.length) await api('/rest/v1/cases', { method: 'POST', body: JSON.stringify(newCases.map(c => caseToRow(c))) });
-      const adj = (Array.isArray(data) ? [] : data?.adjustments) || [];
-      if (adj.length) await api('/rest/v1/adjustments', { method: 'POST',
-        body: JSON.stringify(adj.map(a => ({ company_id: companyId, adj_date: a.date || null, type: a.type === 'out' ? 'out' : 'in', amount: a.amount || 0, note: a.note || '' }))) });
-      const wd = (Array.isArray(data) ? [] : data?.withdrawals) || [];
-      if (wd.length) await api('/rest/v1/withdrawals', { method: 'POST',
-        body: JSON.stringify(wd.map(w => ({ company_id: companyId, w_date: w.date || null, partner: w.partner || '', amount: w.amount || 0, note: w.note || '' }))) });
-      if (!Array.isArray(data)) {
-        if (Array.isArray(data?.partners) && data.partners.length === 3) partners = data.partners;
-        if (data?.settings) settings = { agents: data.settings.agents || [], agentDefaults: data.settings.agentDefaults || {}, editPassHash: data.settings.editPassHash || null };
-        await upsertSettings();
-      }
-      await refreshData(false);
-      notify(`Imported ${newCases.length} cases into ${companyInfo ? companyInfo.name : 'your company'} ✓`);
-    } catch (e) { console.error(e); notify('Import failed — check the file and try again.', true); }
-  };
-  reader.readAsText(file);
-  ev.target.value = '';
-}
-
-function exportCSV() {
-  const rows = [['Date','Company','Agent','Referral Name','Invoice Amount','Invoice Issued','Selling %','Cost %','Referral %',
-    'Expected from Customer','Received from Customer','Customer Status',
-    'Expected from Supplier','Received from Supplier','Supplier Status',
-    'Expected Payout to Client','Paid to Client','Payout Status',
-    'Referral Fee','Referral Paid','Profit %','Profit Amount','Case Status']];
-  for (const c of cases) {
-    const x = computed(c);
-    rows.push([fmtDate(c.date), c.company, c.pic, c.referralName || '', x.amount, c.invoiceIssued ? 'Yes' : 'No',
-      c.sellingPct, c.costPct, c.referralPct,
-      x.expectedCustomer.toFixed(2), x.recvCustomer.toFixed(2), x.sCustomer,
-      x.expectedSupplier.toFixed(2), x.recvSupplier.toFixed(2), x.sSupplier,
-      x.expectedPayout.toFixed(2), x.paidClient.toFixed(2), x.sPayout,
-      x.referralAmount.toFixed(2), x.referralDone ? 'Yes' : 'No',
-      x.profitPct.toFixed(2), x.profitAmount.toFixed(2), x.closed ? 'Closed' : 'Open']);
-  }
-  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  download(`invoice-tracker-${today()}.csv`, csv, 'text/csv');
-}
-
 // pull fresh data when you come back to the app (e.g. switching from phone to Mac)
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden && session && companyId && Date.now() - lastLoadAt > 30000) refreshData(false);
@@ -1469,7 +1393,7 @@ document.addEventListener('visibilitychange', () => {
 /* ---------- info pop-ups ---------- */
 const INFO = {
   app: { t: 'About this system', b: 'Track each case through 4 steps: <b>1)</b> you issue the invoice → <b>2)</b> customer pays you → <b>3)</b> supplier passes you cash → <b>4)</b> you pay cash to your client.<br><br>Partial payments are supported at every step. A case closes automatically once the invoice is issued, all three payments are complete, and the referral (if any) is paid.<br><br>Use the period buttons (Today / 7 Days / 1 Month…) to filter the dashboard and case list by date.' },
-  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your edit password.<br><br>Click any column title to sort A–Z / Z–A. Data saves to the cloud automatically — the 🏢 button at the top refreshes it. Backup, Restore and CSV export are in ⚙️ Profile.' },
+  cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your login password.<br><br>Click any column title to sort A–Z / Z–A. Data saves to the cloud automatically — the 🏢 button at the top refreshes it and switches company. Backups and exports are handled by DLS Technology.' },
   cash: { t: 'Cash Book', b: 'Shows every cash movement with a running balance: cash IN from suppliers, cash OUT to clients, referral fees, profit withdrawals, and your own money in/out.<br><br>Customer invoice payments are bank transfers, so they are <b>not</b> counted in cash on hand.<br><br>If the balance is negative, that is your own money currently fronted.' },
   profit: { t: 'Profit & Partners', b: 'Total profit comes from <b>closed cases only</b> — a case must be fully collected and paid out before its profit enters the pool.<br><br>Profit splits equally between the 3 partners. Record each withdrawal here; it automatically appears as cash out in the Cash Book.<br><br>Balance Profit = total profit − total withdrawn.' },
 };
@@ -1553,15 +1477,6 @@ function renderProfile() {
         <button class="btn-secondary btn-small" onclick="changeLoginPassword()">Change Password</button>
       </div>
       <button class="btn-danger btn-small" onclick="logout()">Log Out</button>
-    </div>
-
-    <div class="leg" style="margin-bottom:12px">
-      <h3>💾 Data</h3>
-      <div class="txn-form" style="margin-top:8px">
-        <button class="btn-secondary btn-small" onclick="exportJSON()">Backup</button>
-        <button class="btn-secondary btn-small" onclick="document.getElementById('importFile').click()">Restore</button>
-        <button class="btn-secondary btn-small" onclick="exportCSV()">Export CSV</button>
-      </div>
     </div>
 
     <div class="leg">

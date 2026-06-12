@@ -118,6 +118,12 @@
           <div><label>Expires (empty = never)</label><input type="date" id="cs_exp"></div>
           <div style="display:flex; align-items:flex-end"><button class="btn-primary" style="width:100%" onclick="saveCompanySettings()">💾 Save</button></div>
         </div>
+        <div class="row-form">
+          <button class="btn-secondary btn-small" onclick="backupCompany()">📦 Backup</button>
+          <button class="btn-secondary btn-small" onclick="document.getElementById('restoreFile').click()">📥 Restore</button>
+          <button class="btn-secondary btn-small" onclick="exportCompanyCSV()">📊 Export CSV</button>
+          <input type="file" id="restoreFile" accept=".json" style="display:none" onchange="doRestore(event)">
+        </div>
       </div>
 
       <h3 id="seatTitle">👥 Users</h3>
@@ -386,6 +392,130 @@ async function removeMember(mid, email) {
   if (!confirm(`Remove ${email} from this company? Their account stays; only access is removed.`)) return;
   try { await api(`/rest/v1/memberships?id=eq.${mid}`, { method: 'DELETE' }); await loadAll(); notify('User removed ✓'); }
   catch (e) { notify('Failed: ' + errMsg(e), true); }
+}
+
+/* ---------- per-company backup / restore / CSV (super admin only) ---------- */
+function download(filename, text, type) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type }));
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+const safeName = s => String(s || 'company').replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase();
+
+// same backup format as the old app, so old backup files restore here too
+const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
+  sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
+  invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
+  customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [] });
+const caseToRow = (c, cid) => ({ company_id: cid, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
+  amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
+  referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
+  referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
+  supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [] });
+
+async function fetchCompanyData(cid) {
+  const [cs, adj, wd, st] = await Promise.all([
+    api(`/rest/v1/cases?company_id=eq.${cid}&select=*&order=case_date.desc&limit=10000`),
+    api(`/rest/v1/adjustments?company_id=eq.${cid}&select=*&limit=10000`),
+    api(`/rest/v1/withdrawals?company_id=eq.${cid}&select=*&limit=10000`),
+    api(`/rest/v1/company_settings?company_id=eq.${cid}&select=*`),
+  ]);
+  const s = st[0] || {};
+  return {
+    cases: cs.map(rowToCase),
+    adjustments: adj.map(r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '' })),
+    withdrawals: wd.map(r => ({ id: r.id, date: r.w_date, partner: r.partner, amount: +r.amount, note: r.note || '' })),
+    partners: (Array.isArray(s.partners) && s.partners.length === 3) ? s.partners : ['Partner 1', 'Partner 2', 'Partner 3'],
+    settings: { agents: s.agents || [], agentDefaults: s.agent_defaults || {} },
+  };
+}
+
+async function backupCompany() {
+  const c = companies.find(x => x.id === openCompanyId);
+  if (!c) return;
+  try {
+    const data = await fetchCompanyData(c.id);
+    download(`${safeName(c.name)}-backup-${todayISO()}.json`, JSON.stringify(data, null, 2), 'application/json');
+    notify(`Backup of "${c.name}" downloaded ✓ (${data.cases.length} cases)`);
+  } catch (e) { notify('Backup failed: ' + errMsg(e), true); }
+}
+
+async function doRestore(ev) {
+  const file = ev.target.files[0];
+  ev.target.value = '';
+  if (!file) return;
+  const c = companies.find(x => x.id === openCompanyId);
+  if (!c) return;
+  if (!confirm(`Restore this backup INTO "${c.name}"?\n\nRecords are ADDED — nothing existing is deleted.`)) return;
+  try {
+    const data = JSON.parse(await file.text());
+    const newCases = Array.isArray(data) ? data : data?.cases;
+    if (!Array.isArray(newCases)) throw new Error('Invalid backup file');
+    if (newCases.length) await api('/rest/v1/cases', { method: 'POST', body: JSON.stringify(newCases.map(x => caseToRow(x, c.id))) });
+    const adj = (Array.isArray(data) ? [] : data?.adjustments) || [];
+    if (adj.length) await api('/rest/v1/adjustments', { method: 'POST',
+      body: JSON.stringify(adj.map(a => ({ company_id: c.id, adj_date: a.date || null, type: a.type === 'out' ? 'out' : 'in', amount: a.amount || 0, note: a.note || '' }))) });
+    const wd = (Array.isArray(data) ? [] : data?.withdrawals) || [];
+    if (wd.length) await api('/rest/v1/withdrawals', { method: 'POST',
+      body: JSON.stringify(wd.map(w => ({ company_id: c.id, w_date: w.date || null, partner: w.partner || '', amount: w.amount || 0, note: w.note || '' }))) });
+    if (!Array.isArray(data)) {
+      const st = { company_id: c.id };
+      if (Array.isArray(data.partners) && data.partners.length === 3) st.partners = data.partners;
+      if (data.settings && Array.isArray(data.settings.agents)) st.agents = data.settings.agents;
+      if (data.settings && data.settings.agentDefaults) st.agent_defaults = data.settings.agentDefaults;
+      if (Object.keys(st).length > 1) await api('/rest/v1/company_settings?on_conflict=company_id',
+        { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates' }, body: JSON.stringify(st) });
+    }
+    notify(`Restored ${newCases.length} cases into "${c.name}" ✓`);
+  } catch (e) { notify('Restore failed: ' + errMsg(e), true); }
+}
+
+// case maths — same formulas as the app, for the CSV columns
+function computedCase(c) {
+  const sum = t => (t || []).reduce((a, x) => a + (Number(x.amount) || 0), 0);
+  const TOL = 0.005;
+  const amount = Number(c.amount) || 0;
+  const expectedCustomer = amount;
+  const expectedSupplier = amount * (1 - (Number(c.costPct) || 0) / 100);
+  const expectedPayout = amount * (1 - (Number(c.sellingPct) || 0) / 100);
+  const referralAmount = amount * (Number(c.referralPct) || 0) / 100;
+  const profitPct = (Number(c.sellingPct) || 0) - (Number(c.costPct) || 0) - (Number(c.referralPct) || 0);
+  const recvCustomer = sum(c.customerPayments), recvSupplier = sum(c.supplierPayments), paidClient = sum(c.clientPayouts);
+  const legStatus = (got, target) => target <= TOL ? 'full' : got >= target - TOL ? 'full' : got > TOL ? 'partial' : 'none';
+  const sCustomer = legStatus(recvCustomer, expectedCustomer), sSupplier = legStatus(recvSupplier, expectedSupplier), sPayout = legStatus(paidClient, expectedPayout);
+  const referralDone = referralAmount <= TOL || !!c.referralPaid;
+  const closed = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
+  return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount,
+    profitPct, profitAmount: amount * profitPct / 100, recvCustomer, recvSupplier, paidClient,
+    sCustomer, sSupplier, sPayout, referralDone, closed };
+}
+
+async function exportCompanyCSV() {
+  const c = companies.find(x => x.id === openCompanyId);
+  if (!c) return;
+  try {
+    const data = await fetchCompanyData(c.id);
+    const rows = [['Date','Company','Agent','Referral Name','Invoice Amount','Invoice Issued','Selling %','Cost %','Referral %',
+      'Expected from Customer','Received from Customer','Customer Status',
+      'Expected from Supplier','Received from Supplier','Supplier Status',
+      'Expected Payout to Client','Paid to Client','Payout Status',
+      'Referral Fee','Referral Paid','Profit %','Profit Amount','Case Status']];
+    for (const k of data.cases) {
+      const x = computedCase(k);
+      rows.push([fmtD(k.date), k.company, k.pic, k.referralName || '', x.amount, k.invoiceIssued ? 'Yes' : 'No',
+        k.sellingPct, k.costPct, k.referralPct,
+        x.expectedCustomer.toFixed(2), x.recvCustomer.toFixed(2), x.sCustomer,
+        x.expectedSupplier.toFixed(2), x.recvSupplier.toFixed(2), x.sSupplier,
+        x.expectedPayout.toFixed(2), x.paidClient.toFixed(2), x.sPayout,
+        x.referralAmount.toFixed(2), x.referralDone ? 'Yes' : 'No',
+        x.profitPct.toFixed(2), x.profitAmount.toFixed(2), x.closed ? 'Closed' : 'Open']);
+    }
+    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+    download(`${safeName(c.name)}-cases-${todayISO()}.csv`, csv, 'text/csv');
+    notify(`CSV of "${c.name}" downloaded ✓ (${data.cases.length} cases)`);
+  } catch (e) { notify('Export failed: ' + errMsg(e), true); }
 }
 
 async function resetPassword(uid, email) {
