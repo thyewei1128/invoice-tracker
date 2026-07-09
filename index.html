@@ -403,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.6.0 (12 Jun 2026)';
+const APP_VERSION = '2.7.0 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1064,7 +1064,7 @@ function openCaseForm(id) {
   if (!guardActive()) return;
   const c = id ? cases.find(c => c.id === id) : null;
   if (c && c.cancelledAt) { notify('🚫 Cancelled case — view only. The owner can restore it first.', true); return; }
-  if (c && computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  if (c && computed(c).closed && !isUnlocked(id)) { notify('🔒 Closed case — open it with Update and unlock with your password first.', true); return; }
   closeAllOverlays();
   editingId = id || null;
   const agents = agentNames();
@@ -1165,7 +1165,7 @@ async function cancelCase(id) {
   if (!guardActive()) return;
   const c = cases.find(c => c.id === id);
   if (!c || c.cancelledAt) return;
-  if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  if (computed(c).closed && !isUnlocked(id)) { notify('🔒 Closed case — open it with Update and unlock with your password first.', true); return; }
   if (pendingCancel !== id) {
     pendingCancel = id;
     render();
@@ -1204,7 +1204,7 @@ async function deleteCase(id) {
   if (!guardActive()) return;
   if (userRole !== 'owner') { notify('Only the owner can permanently delete — use Cancel instead.', true); return; }
   const c0 = cases.find(c => c.id === id);
-  if (c0 && computed(c0).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  if (c0 && computed(c0).closed && !isUnlocked(id)) { notify('🔒 Closed case — open it with Update and unlock with your password first.', true); return; }
   if (pendingDelete !== id) {
     pendingDelete = id;
     render();
@@ -1222,12 +1222,14 @@ async function deleteCase(id) {
 
 /* ---------- detail / payments (draft — changes apply only when Save is clicked) ---------- */
 let detailId = null, detailDraft = null, detailDirty = false;
-let editUnlocked = false;   // true after correct password, until the page is reloaded
+let unlockedId = null;   // id of the ONE case unlocked with the password; relocks when the detail closes
+const isUnlocked = id => unlockedId != null && unlockedId === id;
 
 function openDetail(id) {
   const c0 = cases.find(c => c.id === id);
   if (!c0) return;
   closeAllOverlays();
+  unlockedId = null;   // every fresh open starts locked
   detailId = id;
   detailDraft = JSON.parse(JSON.stringify(c0));
   detailDirty = false;
@@ -1240,7 +1242,7 @@ function renderDetail() {
   if (!c) return;
   const saved = cases.find(s => s.id === detailId);
   const isCanc = !!(saved && saved.cancelledAt);
-  const locked = !!saved && (isCanc || (computed(saved).closed && !editUnlocked));
+  const locked = !!saved && (isCanc || (computed(saved).closed && !isUnlocked(detailId)));
   const x = computed(c);
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
@@ -1309,8 +1311,42 @@ function renderDetail() {
       ${locked ? `<button class="btn-secondary" onclick="closeDetail()">Close</button>`
         : `<span style="align-self:center;font-size:12px;color:var(--muted)">Changes apply only when you click Save</span>
            <button class="btn-secondary" onclick="closeDetail()">Cancel</button>
+           ${x.closed ? '' : `<button class="btn-accent" onclick="fillToClose()">✅ Close Case</button>`}
            <button class="btn-primary" onclick="saveDetail()">💾 Save${detailDirty ? ' Changes' : ''}</button>`}
     </div>`;
+}
+
+// Manually close a near-complete case: settle any small leftover on each leg so it
+// counts as closed and flows into P&L. Fills the draft only — the user still clicks Save.
+const CLOSE_MAX_GAP = 1;   // only auto-settle rounding differences up to RM1 per leg
+function fillToClose() {
+  const c = detailDraft;
+  if (!c) return;
+  const amt = Number(c.amount) || 0;
+  const legs = [
+    ['customerPayments', amt, 'Customer'],
+    ['supplierPayments', amt * (1 - (Number(c.costPct) || 0) / 100), 'Supplier cash-in'],
+    ['clientPayouts',    amt * (1 - (Number(c.sellingPct) || 0) / 100), 'Client payout']
+  ];
+  const gapOf = (k, t) => Math.round((t - sum(c[k])) * 100) / 100;
+  // refuse if any leg is short by more than a rounding difference — that money is genuinely unpaid
+  const big = legs.filter(([k, t]) => gapOf(k, t) > CLOSE_MAX_GAP);
+  if (big.length) {
+    notify('Can’t auto-close — ' + big.map(([k, t, label]) => `${label} still short RM${gapOf(k, t).toFixed(2)}`).join('; ') + '. Enter the real payments first.', true);
+    return;
+  }
+  for (const [k, t] of legs) {
+    const gap = gapOf(k, t);
+    if (gap > TOL) (c[k] = c[k] || []).push({ id: uid(), date: today(), amount: gap, note: 'Closing round-off' });
+  }
+  if (!c.invoiceIssued) c.invoiceIssued = true;
+  detailDirty = true;
+  renderDetail();
+  const xx = computed(c);
+  if (xx.referralAmount > TOL && !c.referralPaid)
+    notify('Cash legs settled ✓ Referral still unpaid — tick "Referral Paid" to fully close, then click 💾 Save.', true);
+  else
+    notify('Case ready to close ✓ Click 💾 Save to confirm.');
 }
 
 async function saveDetail() {
@@ -1319,7 +1355,7 @@ async function saveDetail() {
   catch (e) { saveFail(e); return; }
   const idx = cases.findIndex(s => s.id === detailId);
   if (idx >= 0) cases[idx] = detailDraft;
-  detailId = null; detailDraft = null; detailDirty = false;
+  detailId = null; detailDraft = null; detailDirty = false; unlockedId = null;
   render();
   closeOverlay('detailOverlay');
   notify('Case saved ✓');
@@ -1327,7 +1363,7 @@ async function saveDetail() {
 
 function closeDetail() {
   if (detailDirty) notify('Changes were NOT saved.', true);
-  detailId = null; detailDraft = null; detailDirty = false;
+  detailId = null; detailDraft = null; detailDirty = false; unlockedId = null;
   closeOverlay('detailOverlay');
 }
 
@@ -1340,8 +1376,8 @@ async function unlockDetail() {
       method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
       body: JSON.stringify({ email: session.user.email, password: v }) });
     if (!res.ok) { notify('Wrong password.', true); return; }
-    editUnlocked = true;
-    notify('Unlocked ✓ Closed cases stay editable until you reload the page.');
+    unlockedId = detailId;
+    notify('Unlocked ✓ This case is editable until you close it.');
     renderDetail();
   } catch (e) { notify('Could not verify — check your internet.', true); }
 }
@@ -1357,7 +1393,7 @@ async function toggleInvoice(id) {
   if (!guardActive()) return;
   const c = cases.find(c => c.id === id);
   if (c.cancelledAt) { notify('🚫 Cancelled case — view only.', true); return; }
-  if (computed(c).closed && !editUnlocked) { notify('🔒 Closed case — click Update and unlock with your password first.', true); return; }
+  if (computed(c).closed && !isUnlocked(id)) { notify('🔒 Closed case — open it with Update and unlock with your password first.', true); return; }
   try { await api(`/rest/v1/cases?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify({ invoice_issued: !c.invoiceIssued, updated_at: new Date().toISOString() }) }); }
   catch (e) { saveFail(e); return; }
   c.invoiceIssued = !c.invoiceIssued;
