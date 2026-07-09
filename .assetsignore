@@ -1,0 +1,5 @@
+# Files that should NOT be published to the live site
+.git
+.gitignore
+.assetsignore
+README.md
