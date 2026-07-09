@@ -403,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.7.0 (9 Jul 2026)';
+const APP_VERSION = '2.8.0 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -798,6 +798,17 @@ function gotoPage(p) { page = p; render(); }
 function setPerPage(v) { perPage = Number(v); page = 1; render(); }
 function onFilterChange() { page = 1; render(); }
 
+// Click a dashboard card (Open / Closed) to filter the case list by that status
+function filterByStatus(s) {
+  const sel = document.getElementById('filterStatus');
+  if (sel) sel.value = s;
+  page = 1;
+  mobileGo('cases');   // show the list on mobile; harmless on desktop
+  render();
+  const tw = document.getElementById('tableWrap');
+  if (tw) tw.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
 function computed(c) {
   const amount = Number(c.amount) || 0;
   const expectedCustomer = amount;                                  // client pays invoice amount
@@ -873,8 +884,8 @@ function renderSummary(list, rangeOn) {
       <div style="font-size:11px;margin-top:4px">tap for partners &amp; withdrawals</div>
     </div>` : '';
   document.getElementById('summaryCards').innerHTML = featureCards + `
-    <div class="card"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
-    <div class="card"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
+    <div class="card" style="cursor:pointer" title="Click to see only Open cases" onclick="filterByStatus('open')"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
+    <div class="card" style="cursor:pointer" title="Click to see only Closed cases" onclick="filterByStatus('closed')"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
     <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
     <div class="card"><div class="label">Owed by Suppliers${tag}</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
     <div class="card"><div class="label">Profit (Closed)${tag}</div><div class="value green">${fmt(realized)}</div></div>
