@@ -403,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.9.1 (9 Jul 2026)';
+const APP_VERSION = '2.9.2 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1239,6 +1239,7 @@ async function deleteCase(id) {
 /* ---------- detail / payments (draft — changes apply only when Save is clicked) ---------- */
 let detailId = null, detailDraft = null, detailDirty = false;
 let unlockedId = null;   // id of the ONE case unlocked with the password; stays unlocked until a different case is opened or the app reloads
+let reopenPwId = null;   // id of the case currently asking for the password to reopen (un-close)
 const isUnlocked = id => unlockedId != null && unlockedId === id;
 
 function openDetail(id) {
@@ -1246,6 +1247,7 @@ function openDetail(id) {
   if (!c0) return;
   closeAllOverlays();
   if (unlockedId !== id) unlockedId = null;   // relock only when opening a DIFFERENT case
+  reopenPwId = null;
   detailId = id;
   detailDraft = JSON.parse(JSON.stringify(c0));
   detailDirty = false;
@@ -1325,10 +1327,15 @@ function renderDetail() {
 
     <div class="modal-actions">
       ${locked ? `<button class="btn-secondary" onclick="closeDetail()">Close</button>`
-        : `<span style="align-self:center;font-size:12px;color:var(--muted)">Changes apply only when you click Save</span>
+        : (reopenPwId === detailId
+          ? `<span style="align-self:center;font-size:12px;color:var(--amber);font-weight:600">🔒 Enter your login password to reopen</span>
+           <input type="password" class="note" id="reopen_pass" placeholder="Login password" autocomplete="current-password" style="max-width:220px">
+           <button class="btn-secondary" onclick="cancelReopen()">Cancel</button>
+           <button class="btn-primary" onclick="confirmReopen()">Confirm Reopen</button>`
+          : `<span style="align-self:center;font-size:12px;color:var(--muted)">Changes apply only when you click Save</span>
            <button class="btn-secondary" onclick="closeDetail()">Cancel</button>
-           ${c.forceClosed ? `<button class="btn-secondary" onclick="reopenCase()">↩ Reopen</button>` : (x.closed ? '' : `<button class="btn-accent" onclick="fillToClose()">✅ Close Case</button>`)}
-           <button class="btn-primary" onclick="saveDetail()">💾 Save${detailDirty ? ' Changes' : ''}</button>`}
+           ${c.forceClosed ? `<button class="btn-secondary" onclick="askReopen()">↩ Reopen</button>` : (x.closed ? '' : `<button class="btn-accent" onclick="fillToClose()">✅ Close Case</button>`)}
+           <button class="btn-primary" onclick="saveDetail()">💾 Save${detailDirty ? ' Changes' : ''}</button>`)}
     </div>`;
 }
 
@@ -1356,14 +1363,23 @@ function fillToClose() {
     notify('Ready to close ✓ Now click 💾 Save Changes.');
 }
 
-// Undo a manual close (reopen the case).
-function reopenCase() {
+// Reopen (un-close) requires the login password — this is a sensitive change.
+function askReopen() { reopenPwId = detailId; renderDetail(); setTimeout(() => { const el = document.getElementById('reopen_pass'); if (el) el.focus(); }, 50); }
+function cancelReopen() { reopenPwId = null; renderDetail(); }
+async function confirmReopen() {
+  const v = document.getElementById('reopen_pass').value;
+  if (!v) { notify('Enter your login password.', true); return; }
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: session.user.email, password: v }) });
+    if (!res.ok) { notify('Wrong password.', true); return; }
+  } catch (e) { notify('Could not verify — check your internet.', true); return; }
   const c = detailDraft;
-  if (!c) return;
-  c.forceClosed = false;
-  detailDirty = true;
+  if (c) { c.forceClosed = false; detailDirty = true; }
+  reopenPwId = null;
   renderDetail();
-  notify('Case reopened — click 💾 Save to confirm.');
+  notify('Case reopened ✓ Click 💾 Save Changes to confirm.');
 }
 
 async function saveDetail() {
@@ -1380,7 +1396,7 @@ async function saveDetail() {
 
 function closeDetail() {
   if (detailDirty) notify('Changes were NOT saved.', true);
-  detailId = null; detailDraft = null; detailDirty = false;
+  detailId = null; detailDraft = null; detailDirty = false; reopenPwId = null;
   closeOverlay('detailOverlay');
 }
 
