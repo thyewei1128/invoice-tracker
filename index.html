@@ -403,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.8.0 (9 Jul 2026)';
+const APP_VERSION = '2.9.0 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -459,16 +459,18 @@ async function api(path, opts = {}, retry = true) {
 const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
+  forceClosed: !!r.force_closed,
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
   createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
   cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null });
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
+  force_closed: !!c.forceClosed,
   referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
   supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [],
   updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
-const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '' });
+const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '', isExpense: !!r.is_expense });
 const rowToWd = r => ({ id: r.id, date: r.w_date, partner: r.partner, amount: +r.amount, note: r.note || '' });
 
 function saveFail(e) {
@@ -829,7 +831,9 @@ function computed(c) {
   const sPayout   = legStatus(paidClient, expectedPayout);
   const referralDone = referralAmount <= TOL || !!c.referralPaid;
 
-  const closed = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
+  // A case is Closed when every leg is truly fulfilled, OR a human has manually force-closed it.
+  const fullyPaid = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
+  const closed = fullyPaid || !!c.forceClosed;
 
   return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount,
            profitPct, profitAmount, recvCustomer, recvSupplier, paidClient,
@@ -848,7 +852,7 @@ function cashMovements() {
     for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
     if (c.referralPaid && x.referralAmount > TOL) moves.push({ date: c.referralPaidDate || c.date, amount: -x.referralAmount, label: `Referral fee — ${c.company}${c.referralName ? ' (' + c.referralName + ')' : ''}`, note: '' });
   }
-  for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.type === 'in' ? 'Cash in' : 'Cash out', note: a.note || '', adjId: a.id });
+  for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.isExpense ? '💸 Expense' : (a.type === 'in' ? 'Cash in' : 'Cash out'), note: a.note || '', adjId: a.id });
   for (const w of withdrawals) moves.push({ date: w.date, amount: -(Number(w.amount) || 0), label: `Profit withdrawal — ${w.partner}`, note: w.note || '' });
   moves.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   return moves;
@@ -858,6 +862,7 @@ const cashOnHand = () => cashMovements().reduce((a, m) => a + m.amount, 0);
 /* ---------- summary ---------- */
 const realizedProfitAll = () => cases.filter(c => !c.cancelledAt && computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
 const withdrawnAll = () => sum(withdrawals);
+const expensesAll = () => adjustments.filter(a => a.isExpense).reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
 function renderSummary(list, rangeOn) {
   const open = list.filter(c => !computed(c).closed);
@@ -867,7 +872,7 @@ function renderSummary(list, rangeOn) {
   const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedPayout - x.paidClient); }, 0);
   const realized = closedCases.reduce((a, c) => a + computed(c).profitAmount, 0);
   const pending = open.reduce((a, c) => a + computed(c).profitAmount, 0);
-  const balanceProfit = realizedProfitAll() - withdrawnAll();
+  const balanceProfit = realizedProfitAll() - expensesAll() - withdrawnAll();
   const tag = rangeOn ? '<span style="font-size:10px;color:var(--blue)"> · period</span>' : '';
 
   const cash = cashOnHand();
@@ -1322,42 +1327,43 @@ function renderDetail() {
       ${locked ? `<button class="btn-secondary" onclick="closeDetail()">Close</button>`
         : `<span style="align-self:center;font-size:12px;color:var(--muted)">Changes apply only when you click Save</span>
            <button class="btn-secondary" onclick="closeDetail()">Cancel</button>
-           ${x.closed ? '' : `<button class="btn-accent" onclick="fillToClose()">✅ Close Case</button>`}
+           ${c.forceClosed ? `<button class="btn-secondary" onclick="reopenCase()">↩ Reopen</button>` : (x.closed ? '' : `<button class="btn-accent" onclick="fillToClose()">✅ Close Case</button>`)}
            <button class="btn-primary" onclick="saveDetail()">💾 Save${detailDirty ? ' Changes' : ''}</button>`}
     </div>`;
 }
 
 // Manually close a near-complete case: settle any small leftover on each leg so it
 // counts as closed and flows into P&L. Fills the draft only — the user still clicks Save.
-const CLOSE_MAX_GAP = 1;   // only auto-settle rounding differences up to RM1 per leg
+// Manually close a case (human override) — marks it Closed WITHOUT touching any payment
+// amounts, so it NEVER creates fake cash movements. Fills the draft only; user clicks Save.
 function fillToClose() {
   const c = detailDraft;
   if (!c) return;
-  const amt = Number(c.amount) || 0;
-  const legs = [
-    ['customerPayments', amt, 'Customer'],
-    ['supplierPayments', amt * (1 - (Number(c.costPct) || 0) / 100), 'Supplier cash-in'],
-    ['clientPayouts',    amt * (1 - (Number(c.sellingPct) || 0) / 100), 'Client payout']
-  ];
-  const gapOf = (k, t) => Math.round((t - sum(c[k])) * 100) / 100;
-  // refuse if any leg is short by more than a rounding difference — that money is genuinely unpaid
-  const big = legs.filter(([k, t]) => gapOf(k, t) > CLOSE_MAX_GAP);
-  if (big.length) {
-    notify('Can’t auto-close — ' + big.map(([k, t, label]) => `${label} still short RM${gapOf(k, t).toFixed(2)}`).join('; ') + '. Enter the real payments first.', true);
-    return;
-  }
-  for (const [k, t] of legs) {
-    const gap = gapOf(k, t);
-    if (gap > TOL) (c[k] = c[k] || []).push({ id: uid(), date: today(), amount: gap, note: 'Closing round-off' });
-  }
+  c.forceClosed = true;
   if (!c.invoiceIssued) c.invoiceIssued = true;
   detailDirty = true;
   renderDetail();
-  const xx = computed(c);
-  if (xx.referralAmount > TOL && !c.referralPaid)
-    notify('Cash legs settled ✓ Referral still unpaid — tick "Referral Paid" to fully close, then click 💾 Save.', true);
+  const amt = Number(c.amount) || 0;
+  const shortfalls = [
+    ['Customer', amt - sum(c.customerPayments)],
+    ['Supplier cash-in', amt * (1 - (Number(c.costPct) || 0) / 100) - sum(c.supplierPayments)],
+    ['Client payout', amt * (1 - (Number(c.sellingPct) || 0) / 100) - sum(c.clientPayouts)]
+  ].filter(([l, g]) => g > 0.01).map(([l, g]) => `${l} short RM${g.toFixed(2)}`);
+  const refNote = (computed(c).referralAmount > TOL && !c.referralPaid) ? ' Referral still unpaid.' : '';
+  if (shortfalls.length)
+    notify('Manually closing — ' + shortfalls.join('; ') + '.' + refNote + ' Cash on hand is NOT changed. Click 💾 Save to confirm.', true);
   else
     notify('Case ready to close ✓ Click 💾 Save to confirm.');
+}
+
+// Undo a manual close (reopen the case).
+function reopenCase() {
+  const c = detailDraft;
+  if (!c) return;
+  c.forceClosed = false;
+  detailDirty = true;
+  renderDetail();
+  notify('Case reopened — click 💾 Save to confirm.');
 }
 
 async function saveDetail() {
@@ -1439,9 +1445,10 @@ function cashBookHTML() {
         <select id="adj_type" style="padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
           <option value="in">Cash In</option>
           <option value="out">Cash Out</option>
+          <option value="expense">Expense (cash out − reduces profit)</option>
         </select>
         <input type="number" class="amt" id="adj_amount" placeholder="Amount (RM)" step="0.01" min="0">
-        <input type="text" class="note" id="adj_note" placeholder="Note (e.g. topped up capital)">
+        <input type="text" class="note" id="adj_note" placeholder="Note (e.g. rent, petrol, printing)">
         <button class="btn-primary btn-small" onclick="addAdjustment()">Add</button>
       </div>
     </div>
@@ -1458,8 +1465,10 @@ async function addAdjustment() {
   if (!guardActive()) return;
   const amount = Number(document.getElementById('adj_amount').value);
   if (!amount || amount <= 0) { notify('Please enter an amount.', true); return; }
+  const kind = document.getElementById('adj_type').value;   // 'in' | 'out' | 'expense'
+  const isExpense = kind === 'expense';
   const row = { company_id: companyId, adj_date: document.getElementById('adj_date').value || today(),
-    type: document.getElementById('adj_type').value, amount, note: document.getElementById('adj_note').value.trim() };
+    type: isExpense ? 'out' : kind, amount, note: document.getElementById('adj_note').value.trim(), is_expense: isExpense };
   try {
     const rows = await api('/rest/v1/adjustments', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
     adjustments.push(rowToAdj(rows[0]));
@@ -1480,13 +1489,15 @@ function openProfit() { financeTab = 'profit'; openFinance(); }
 function profitHTML() {
   const range = getRange();
   const realized = realizedProfitAll();
+  const expenses = expensesAll();
+  const net = realized - expenses;
   const withdrawn = withdrawnAll();
-  const balance = realized - withdrawn;
+  const balance = net - withdrawn;
   const pending = cases.filter(c => !c.cancelledAt && !computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
   const periodProfit = cases.filter(c => !c.cancelledAt && computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).profitAmount, 0);
 
   const partnerRows = partners.map((p, i) => {
-    const share = realized / 3;
+    const share = net / 3;
     const taken = sum(withdrawals.filter(w => w.partner === p));
     const bal = share - taken;
     return `<tr>
@@ -1505,6 +1516,8 @@ function profitHTML() {
   return `
     <div class="figures" style="margin-top:14px">
       <div class="fig"><div class="label">Total Profit (closed cases)</div><div class="value" style="color:var(--green)">${fmt(realized)}</div></div>
+      <div class="fig"><div class="label">Total Expenses</div><div class="value" style="color:var(--red)">${fmt(expenses)}</div></div>
+      <div class="fig"><div class="label">Net Profit (after expenses)</div><div class="value" style="color:${net < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(net)}</div></div>
       <div class="fig"><div class="label">Total Withdrawn</div><div class="value">${fmt(withdrawn)}</div></div>
       <div class="fig"><div class="label">Balance Profit</div><div class="value" style="color:${balance < 0 ? 'var(--red)' : 'var(--green)'}">${fmt(balance)}</div></div>
       <div class="fig"><div class="label">Profit Pending (open cases)</div><div class="value">${fmt(pending)}</div></div>
@@ -1512,7 +1525,7 @@ function profitHTML() {
     </div>
 
     <div class="leg">
-      <h3 style="margin-bottom:8px">Partner balances · 3-way split · amounts in RM <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
+      <h3 style="margin-bottom:8px">Partner balances · 3-way split of net profit (after expenses) · amounts in RM <button class="info-btn" onclick="showInfo('profit')">!</button></h3>
       <table><thead><tr><th>Partner</th><th class="num">Share</th><th class="num">Withdrawn</th><th class="num">Balance</th></tr></thead>
       <tbody>${partnerRows}</tbody></table>
       <div style="margin-top:8px"><button class="btn-secondary btn-small" onclick="savePartners()">Save Partner Names</button></div>
