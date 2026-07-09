@@ -403,7 +403,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.9.2 (9 Jul 2026)';
+const APP_VERSION = '2.9.3 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -835,8 +835,15 @@ function computed(c) {
   const fullyPaid = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
   const closed = fullyPaid || !!c.forceClosed;
 
+  // ACTUAL profit = real cash received from supplier − real cash paid to client − referral fee owed.
+  // For a closed case we book the real result; for an open case we show the expected (%) projection.
+  const actualProfit = recvSupplier - paidClient - referralAmount;
+  const displayProfit = closed ? actualProfit : profitAmount;
+  const displayPct = closed ? (amount > 0 ? actualProfit / amount * 100 : 0) : profitPct;
+
   return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount,
-           profitPct, profitAmount, recvCustomer, recvSupplier, paidClient,
+           profitPct, profitAmount, actualProfit, displayProfit, displayPct,
+           recvCustomer, recvSupplier, paidClient,
            sCustomer, sSupplier, sPayout, referralDone, closed };
 }
 
@@ -860,7 +867,7 @@ function cashMovements() {
 const cashOnHand = () => cashMovements().reduce((a, m) => a + m.amount, 0);
 
 /* ---------- summary ---------- */
-const realizedProfitAll = () => cases.filter(c => !c.cancelledAt && computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
+const realizedProfitAll = () => cases.filter(c => !c.cancelledAt && computed(c).closed).reduce((a, c) => a + computed(c).actualProfit, 0);
 const withdrawnAll = () => sum(withdrawals);
 const expensesAll = () => adjustments.filter(a => a.isExpense).reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
@@ -870,7 +877,7 @@ function renderSummary(list, rangeOn) {
   const outstandingCustomer = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedCustomer - x.recvCustomer); }, 0);
   const outstandingSupplier = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedSupplier - x.recvSupplier); }, 0);
   const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedPayout - x.paidClient); }, 0);
-  const realized = closedCases.reduce((a, c) => a + computed(c).profitAmount, 0);
+  const realized = closedCases.reduce((a, c) => a + computed(c).actualProfit, 0);
   const pending = open.reduce((a, c) => a + computed(c).profitAmount, 0);
   const balanceProfit = realizedProfitAll() - expensesAll() - withdrawnAll();
   const tag = rangeOn ? '<span style="font-size:10px;color:var(--blue)"> · period</span>' : '';
@@ -905,7 +912,7 @@ function sumUp(arr) {
     recvC: a.recvC + x.recvCustomer, expC: a.expC + x.expectedCustomer,
     recvS: a.recvS + x.recvSupplier, expS: a.expS + x.expectedSupplier,
     paid: a.paid + x.paidClient, expP: a.expP + x.expectedPayout,
-    profit: a.profit + x.profitAmount,
+    profit: a.profit + x.displayProfit,
   }), { amount: 0, recvC: 0, expC: 0, recvS: 0, expS: 0, paid: 0, expP: 0, profit: 0 });
 }
 
@@ -966,7 +973,7 @@ function render() {
       case 'customer': return x.expectedCustomer > 0 ? x.recvCustomer / x.expectedCustomer : 1;
       case 'supplier': return x.expectedSupplier > 0 ? x.recvSupplier / x.expectedSupplier : 1;
       case 'payout': return x.expectedPayout > 0 ? x.paidClient / x.expectedPayout : 1;
-      case 'profit': return x.profitAmount;
+      case 'profit': return x.displayProfit;
       case 'status': return c.cancelledAt ? 2 : (x.closed ? 1 : 0);
       default: return 0;
     }
@@ -1016,7 +1023,7 @@ function render() {
         <td>${legBadge(x.sCustomer, x.recvCustomer, x.expectedCustomer)}</td>
         <td>${legBadge(x.sSupplier, x.recvSupplier, x.expectedSupplier)}</td>
         <td>${legBadge(x.sPayout, x.paidClient, x.expectedPayout)}</td>
-        <td class="num"><b>${fmt(x.profitAmount)}</b><div style="font-size:11px;color:var(--muted)">${pct(x.profitPct)}</div></td>
+        <td class="num"><b>${fmt(x.displayProfit)}</b><div style="font-size:11px;color:var(--muted)">${pct(x.displayPct)}</div></td>
         <td>${c.cancelledAt ? '<span class="badge none">Cancelled</span>' : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>')}</td>
         <td class="actions-col" onclick="event.stopPropagation()">
           <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${c.cancelledAt ? 'View' : 'Update'}</button>
@@ -1301,7 +1308,7 @@ function renderDetail() {
       <div class="fig"><div class="label">Invoice Amount</div><div class="value">${fmt(x.amount)}</div></div>
       <div class="fig"><div class="label">Selling / Cost / Referral</div><div class="value">${pct(c.sellingPct)} / ${pct(c.costPct)} / ${pct(c.referralPct)}</div></div>
       <div class="fig"><div class="label">Referral Fee</div><div class="value">${fmt(x.referralAmount)}</div></div>
-      <div class="fig"><div class="label">Profit</div><div class="value" style="color:var(--green)">${fmt(x.profitAmount)} (${pct(x.profitPct)})</div></div>
+      <div class="fig"><div class="label">Profit${x.closed ? ' (actual)' : ' (expected)'}</div><div class="value" style="color:var(--green)">${fmt(x.displayProfit)} (${pct(x.displayPct)})</div></div>
     </div>
 
     ${locked ? (isCanc ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🚫 This case is CANCELLED — view only, not counted in any figures.
@@ -1510,7 +1517,7 @@ function profitHTML() {
   const withdrawn = withdrawnAll();
   const balance = net - withdrawn;
   const pending = cases.filter(c => !c.cancelledAt && !computed(c).closed).reduce((a, c) => a + computed(c).profitAmount, 0);
-  const periodProfit = cases.filter(c => !c.cancelledAt && computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).profitAmount, 0);
+  const periodProfit = cases.filter(c => !c.cancelledAt && computed(c).closed && inRange(c.date, range)).reduce((a, c) => a + computed(c).actualProfit, 0);
 
   const partnerRows = partners.map((p, i) => {
     const share = net / 3;
