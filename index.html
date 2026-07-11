@@ -137,6 +137,10 @@
 
   #ptr { display: none; position: fixed; top: 0; left: 0; right: 0; z-index: 70; text-align: center; padding: 12px; font-size: 13px; font-weight: 700; color: #fff; background: var(--accent); }
   .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+  /* cases generated from a recurring template stand out in the list */
+  tr.row.from-rec { background: #EAF4F9; }
+  tr.row.from-rec:hover { background: #DDEDF5; }
+  tr.row.from-rec td:first-child { box-shadow: inset 4px 0 0 var(--accent); }
 
   .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   .field.full { grid-column: 1 / -1; }
@@ -373,6 +377,18 @@
   </div>
 </div>
 
+<!-- "the rates changed — update the template?" prompt -->
+<div class="overlay" id="recUpdateOverlay">
+  <div class="modal" style="max-width:560px">
+    <h2>🔁 Rates changed — update the recurring?</h2>
+    <div id="recUpdateBody"></div>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="dismissRecTemplateUpdate()">No, keep as before</button>
+      <button class="btn-primary" onclick="applyRecTemplateUpdate()">Yes, update recurring</button>
+    </div>
+  </div>
+</div>
+
 <!-- Detail modal -->
 <div class="overlay" id="detailOverlay">
   <div class="modal" id="detailModal"></div>
@@ -440,7 +456,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.1.0 (11 Jul 2026)';
+const APP_VERSION = '3.2.0 (11 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -497,14 +513,14 @@ async function api(path, opts = {}, retry = true) {
 const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
-  forceClosed: !!r.force_closed,
+  forceClosed: !!r.force_closed, recurringId: r.recurring_id || null,
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
   createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
   cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null });
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
-  force_closed: !!c.forceClosed,
+  force_closed: !!c.forceClosed, recurring_id: c.recurringId || null,
   referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
   supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [],
   updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
@@ -1098,9 +1114,9 @@ function render() {
     </tr></thead>
     <tbody>
     ${pageList.map(({ c, x }) => `
-      <tr class="row" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
+      <tr class="row ${c.recurringId ? 'from-rec' : ''}" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
         <td>${fmtDate(c.date)}</td>
-        <td><b>${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
+        <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
         <td class="num">${fmt(x.amount)}</td>
         <td onclick="event.stopPropagation()">${c.invoiceIssued
@@ -1264,7 +1280,7 @@ async function saveCaseForm() {
       await api(`/rest/v1/cases?id=eq.${editingId}`, { method: 'PATCH', body: JSON.stringify(caseToRow({ ...local, ...data })) });
       Object.assign(local, data);
     } else {
-      const draft = { invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [], ...data };
+      const draft = { invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [], ...data, recurringId: pendingRecId || null };
       const rows = await api('/rest/v1/cases', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ ...caseToRow(draft), created_by: session?.user?.id || null }) });
       cases.unshift(rowToCase(rows[0]));
     }
@@ -1272,7 +1288,7 @@ async function saveCaseForm() {
 
   // if this new case came from a recurring template, roll its next reminder forward
   const fromTemplate = !!pendingRecId;
-  if (!wasEditing) await advanceRecurringAfterSave(amount);
+  if (!wasEditing) await advanceRecurringAfterSave(amount, { sellingPct, costPct, referralPct, referralName: data.referralName });
 
   // "Also set up as recurring" tick — skip if this case already came from a template
   const mkRec = document.getElementById('f_makeRecurring');
@@ -1913,6 +1929,60 @@ async function checkUpdate() {
 let editingRecId = null;
 let pendingRecId = null;   // the template the currently-open New Case form was filled from
 let recDelPwId = null;     // recurring row waiting for the password before it is deleted
+let recSelected = new Set();  // templates ticked for batch generation
+let recBatchMode = false;     // showing the batch confirm panel
+
+function toggleRecSel(id, on) { if (on) recSelected.add(id); else recSelected.delete(id); recBatchMode = false; renderRecurring(); }
+function toggleRecSelAll(on) {
+  recSelected.clear();
+  if (on) recurring.filter(r => r.active).forEach(r => recSelected.add(r.id));
+  recBatchMode = false;
+  renderRecurring();
+}
+function clearRecSel() { recSelected.clear(); recBatchMode = false; renderRecurring(); }
+function startBatchGenerate() { if (!recSelected.size) return; recBatchMode = true; renderRecurring(); }
+function cancelBatch() { recBatchMode = false; renderRecurring(); }
+
+// create a case for every ticked template, using the amounts/dates you just confirmed
+async function createBatchCases() {
+  if (!guardActive()) return;
+  const sel = recurring.filter(r => recSelected.has(r.id) && r.active);
+  if (!sel.length) return;
+
+  // validate everything BEFORE creating anything
+  const jobs = [];
+  for (const r of sel) {
+    const amount = Number(document.getElementById(`b_amt_${r.id}`).value);
+    const date = document.getElementById(`b_date_${r.id}`).value || today();
+    if (!isFinite(amount) || amount <= 0) { notify(`${r.customer}: enter a valid amount above 0.`, true); return; }
+    if ((r.sellingPct || 0) - (r.costPct || 0) - (r.referralPct || 0) <= 0) { notify(`${r.customer}: no profit — fix the % on this recurring first.`, true); return; }
+    if (!r.agent) { notify(`${r.customer}: no agent set — edit this recurring first.`, true); return; }
+    jobs.push({ r, amount, date });
+  }
+
+  let made = 0;
+  for (const { r, amount, date } of jobs) {
+    const draft = { date, company: r.customer, pic: r.agent, amount,
+      sellingPct: r.sellingPct, costPct: r.costPct, referralPct: r.referralPct, referralName: r.referralName || '',
+      invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [],
+      recurringId: r.id };
+    try {
+      const rows = await api('/rest/v1/cases', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify({ ...caseToRow(draft), created_by: session?.user?.id || null }) });
+      cases.unshift(rowToCase(rows[0]));
+      made++;
+      const merged = { ...r, nextDue: rollNextDue(r), amount };
+      await api(`/rest/v1/recurring?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(recToRow(merged)) }).catch(() => {});
+      Object.assign(r, merged);
+    } catch (e) {
+      notify(`Failed on ${r.customer} — stopped after creating ${made}.`, true);
+      break;
+    }
+  }
+  recSelected.clear();
+  recBatchMode = false;
+  render(); renderRecurring();
+  if (made) notify(`✅ Created ${made} case${made > 1 ? 's' : ''} — next reminders rolled forward.`);
+}
 
 // shared: check the user's LOGIN password. true = correct, false = wrong, null = network problem
 async function verifyLoginPassword(v) {
@@ -1958,23 +2028,31 @@ function openRecurring() {
   closeAllOverlays();
   editingRecId = null;
   recDelPwId = null;
+  recSelected.clear();
+  recBatchMode = false;
   renderRecurring();
   document.getElementById('recurringOverlay').classList.add('show');
 }
 
+const REC_RED_DAYS = 3;   // due within this many days (or overdue) shows RED
 function recStatusBadge(r) {
   if (!r.active) return `<span class="badge none">Paused</span>`;
   if (!r.nextDue) return `<span class="badge none">No date</span>`;
   const dl = daysUntil(r.nextDue);
-  if (dl < 0) return `<span class="badge" style="background:var(--red-soft);color:var(--red)">Overdue ${-dl}d</span>`;
-  if (dl === 0) return `<span class="badge" style="background:var(--amber-soft);color:var(--amber)">Due today</span>`;
+  const red = `background:var(--red-soft);color:var(--red);font-weight:700`;
+  if (dl < 0) return `<span class="badge" style="${red}">Overdue ${-dl}d</span>`;
+  if (dl === 0) return `<span class="badge" style="${red}">Due today</span>`;
+  if (dl <= REC_RED_DAYS) return `<span class="badge" style="${red}">Due in ${dl}d</span>`;
   if (recIsDue(r)) return `<span class="badge" style="background:var(--amber-soft);color:var(--amber)">Due in ${dl}d</span>`;
   return `<span class="badge">in ${dl}d</span>`;
 }
 
 function renderRecurring() {
   const list = [...recurring].sort((a, b) => (a.nextDue || '9999').localeCompare(b.nextDue || '9999'));
+  const selectable = list.filter(r => r.active);
+  const allSel = selectable.length > 0 && selectable.every(r => recSelected.has(r.id));
   const rows = list.map(r => `<tr>
+    <td><input type="checkbox" onchange="toggleRecSel('${r.id}', this.checked)" ${recSelected.has(r.id) ? 'checked' : ''} ${r.active ? '' : 'disabled'}></td>
     <td><b>${esc(r.customer)}</b><div style="font-size:11px;color:var(--muted)">${esc(r.agent || '-')} · ${r.sellingPct}/${r.costPct}/${r.referralPct}%${r.referralName ? ' · ' + esc(r.referralName) : ''}</div></td>
     <td>${r.nextDue ? fmtDate(r.nextDue) : '—'}<div style="font-size:11px;color:var(--muted)">every ${r.everyN} ${r.everyUnit}${r.everyN > 1 ? 's' : ''} · remind ${r.leadDays}d before</div></td>
     <td class="num">${fmtN(r.amount)}</td>
@@ -1986,6 +2064,32 @@ function renderRecurring() {
       <button class="btn-danger btn-small" onclick="deleteRecurring('${r.id}')">×</button>
     </td>
   </tr>`).join('');
+
+  // batch bar + batch confirm panel
+  const selList = list.filter(r => recSelected.has(r.id) && r.active);
+  const batchBar = selList.length && !recBatchMode ? `
+    <div class="leg" style="background:var(--accent-soft);border:1px solid var(--accent);margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+      <div style="font-size:13px;font-weight:700">${selList.length} selected</div>
+      <div>
+        <button class="btn-primary btn-small" onclick="startBatchGenerate()">⚡ Generate Selected (${selList.length})</button>
+        <button class="btn-secondary btn-small" onclick="clearRecSel()">Clear</button>
+      </div>
+    </div>` : '';
+  const batchPanel = recBatchMode && selList.length ? `
+    <div class="leg" style="border:1.5px solid var(--accent);margin-bottom:12px">
+      <h3 style="margin-bottom:8px">⚡ Generate ${selList.length} case${selList.length > 1 ? 's' : ''} — check each amount and date</h3>
+      <table><thead><tr><th>Client</th><th>Date</th><th class="num">Amount (RM)</th></tr></thead><tbody>
+        ${selList.map(r => `<tr>
+          <td><b>${esc(r.customer)}</b><div style="font-size:11px;color:var(--muted)">${esc(r.agent || '-')} · ${r.sellingPct}/${r.costPct}/${r.referralPct}%</div></td>
+          <td><input type="date" id="b_date_${r.id}" value="${r.nextDue || today()}"></td>
+          <td><input type="number" class="amt" id="b_amt_${r.id}" step="0.01" min="0" value="${r.amount || ''}"></td>
+        </tr>`).join('')}
+      </tbody></table>
+      <div style="margin-top:10px">
+        <button class="btn-primary btn-small" onclick="createBatchCases()">✅ Create ${selList.length} Case${selList.length > 1 ? 's' : ''}</button>
+        <button class="btn-secondary btn-small" onclick="cancelBatch()">Cancel</button>
+      </div>
+    </div>` : '';
 
   const e = editingRecId ? recurring.find(r => r.id === editingRecId) : null;
   const agents = [...new Set([...agentNames(), ...(e && e.agent ? [e.agent] : [])])].sort();
@@ -2002,9 +2106,15 @@ function renderRecurring() {
       </div>
     </div>` : ''}
 
+    ${batchPanel}
+    ${batchBar}
+
     <div class="leg">
       <h3 style="margin-bottom:8px">Recurring clients</h3>
-      ${list.length ? `<table><thead><tr><th>Client</th><th>Next due</th><th class="num">Suggested</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      ${list.length ? `<table><thead><tr>
+          <th><input type="checkbox" onchange="toggleRecSelAll(this.checked)" ${allSel ? 'checked' : ''} title="Select all"></th>
+          <th>Client</th><th>Next due</th><th class="num">Suggested</th><th>Status</th><th></th>
+        </tr></thead><tbody>${rows}</tbody></table>`
       : '<div style="color:var(--muted);font-size:13px">No recurring clients yet — add one below.</div>'}
     </div>
 
@@ -2198,7 +2308,8 @@ function pickRec(id) {
 }
 
 // after a new case is saved from a template, roll its next due date forward
-async function advanceRecurringAfterSave(amountUsed) {
+// and, if the rates were changed, ask whether the template should be updated too
+async function advanceRecurringAfterSave(amountUsed, used) {
   if (!pendingRecId) return;
   const r = recurring.find(x => x.id === pendingRecId);
   pendingRecId = null;
@@ -2208,6 +2319,47 @@ async function advanceRecurringAfterSave(amountUsed) {
   catch (err) { return; }
   Object.assign(r, merged);
   notify(`Next reminder for ${r.customer}: ${fmtDate(r.nextDue)}`);
+
+  if (!used) return;
+  const near = (a, b) => Math.abs((Number(a) || 0) - (Number(b) || 0)) < 0.0001;
+  const diffs = [];
+  if (!near(r.sellingPct, used.sellingPct)) diffs.push(['Selling %', r.sellingPct + '%', used.sellingPct + '%']);
+  if (!near(r.costPct, used.costPct)) diffs.push(['Cost %', r.costPct + '%', used.costPct + '%']);
+  if (!near(r.referralPct, used.referralPct)) diffs.push(['Referral %', r.referralPct + '%', used.referralPct + '%']);
+  if ((r.referralName || '') !== (used.referralName || '')) diffs.push(['Referral name', r.referralName || '—', used.referralName || '—']);
+  if (diffs.length) askUpdateRecTemplate(r, diffs, used);
+}
+
+let recUpdatePending = null;   // { id, used }
+function askUpdateRecTemplate(r, diffs, used) {
+  recUpdatePending = { id: r.id, used };
+  document.getElementById('recUpdateBody').innerHTML = `
+    <div style="font-size:13px;margin-bottom:10px">You used different rates for <b>${esc(r.customer)}</b> than the saved recurring. Should future reminders use the new rates?</div>
+    <table><thead><tr><th></th><th>Recurring (before)</th><th>This case (new)</th></tr></thead><tbody>
+      ${diffs.map(([label, was, now]) => `<tr><td><b>${esc(label)}</b></td><td style="color:var(--muted)">${esc(String(was))}</td><td style="color:var(--green);font-weight:700">${esc(String(now))}</td></tr>`).join('')}
+    </tbody></table>
+    <div style="font-size:12px;color:var(--muted);margin-top:8px">The case you just saved keeps the new rates either way — this only affects the recurring template.</div>`;
+  document.getElementById('recUpdateOverlay').classList.add('show');
+}
+
+function dismissRecTemplateUpdate() {
+  recUpdatePending = null;
+  closeOverlay('recUpdateOverlay');
+}
+
+async function applyRecTemplateUpdate() {
+  if (!recUpdatePending) { closeOverlay('recUpdateOverlay'); return; }
+  const { id, used } = recUpdatePending;
+  const r = recurring.find(x => x.id === id);
+  if (!r) { dismissRecTemplateUpdate(); return; }
+  const merged = { ...r, sellingPct: used.sellingPct, costPct: used.costPct, referralPct: used.referralPct, referralName: used.referralName || '' };
+  try { await api(`/rest/v1/recurring?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(recToRow(merged)) }); }
+  catch (err) { saveFail(err); return; }
+  Object.assign(r, merged);
+  recUpdatePending = null;
+  closeOverlay('recUpdateOverlay');
+  render();
+  notify('Recurring updated with the new rates ✓');
 }
 
 /* ---------- page navigation (remembers where you are) ---------- */
