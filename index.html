@@ -315,6 +315,10 @@
   <div class="modal">
     <button class="modal-x" onclick="closeOverlay('formOverlay')">✕</button>
     <h2 id="formTitle">New Case</h2>
+    <div id="recPickWrap" style="margin-bottom:10px">
+      <button class="btn-secondary btn-small" onclick="togglePickRecurring()">🔁 Fill from Recurring</button>
+      <div id="recPicker" style="display:none;margin-top:8px"></div>
+    </div>
     <div class="form-grid">
       <div class="field"><label>Date</label><input type="date" id="f_date"></div>
       <div class="field"><label>Invoice Amount (RM)</label><input type="number" id="f_amount" step="0.01" min="0" oninput="updatePreview()"></div>
@@ -333,6 +337,15 @@
       <button class="btn-secondary" onclick="closeOverlay('formOverlay')">Cancel</button>
       <button class="btn-primary" id="formSaveBtn" onclick="saveCaseForm()">Save Case</button>
     </div>
+  </div>
+</div>
+
+<!-- Recurring invoices modal -->
+<div class="overlay" id="recurringOverlay">
+  <div class="modal">
+    <button class="modal-x" onclick="closeOverlay('recurringOverlay')">✕</button>
+    <h2>🔁 Recurring Invoices</h2>
+    <div id="recurringBody"></div>
   </div>
 </div>
 
@@ -403,13 +416,14 @@
 </nav>
 
 <script>
-const APP_VERSION = '2.9.3 (9 Jul 2026)';
+const APP_VERSION = '3.0.0 (9 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
 let cases = [];
 let adjustments = [];   // cash in/out: {id, date, type:'in'|'out', amount, note}
 let withdrawals = [];   // profit taken by partners: {id, date, partner, amount, note}
+let recurring = [];     // recurring invoice reminders (templates you approve before generating)
 let partners = ['Partner 1', 'Partner 2', 'Partner 3'];   // equal 3-way split
 let settings = {};      // company settings: agents, agentDefaults, editPassHash
 let editingId = null;
@@ -472,6 +486,14 @@ const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, cust
   updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
 const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '', isExpense: !!r.is_expense });
 const rowToWd = r => ({ id: r.id, date: r.w_date, partner: r.partner, amount: +r.amount, note: r.note || '' });
+const rowToRec = r => ({ id: r.id, customer: r.customer || '', agent: r.agent || '', amount: +r.amount || 0,
+  sellingPct: +r.selling_pct || 0, costPct: +r.cost_pct || 0, referralPct: +r.referral_pct || 0, referralName: r.referral_name || '',
+  everyN: +r.every_n || 1, everyUnit: r.every_unit || 'month', nextDue: r.next_due || null,
+  leadDays: +r.lead_days || 0, active: r.active !== false, note: r.note || '' });
+const recToRow = r => ({ company_id: companyId, customer: r.customer || '', agent: r.agent || '', amount: r.amount || 0,
+  selling_pct: r.sellingPct || 0, cost_pct: r.costPct || 0, referral_pct: r.referralPct || 0, referral_name: r.referralName || '',
+  every_n: r.everyN || 1, every_unit: r.everyUnit || 'month', next_due: r.nextDue || null,
+  lead_days: r.leadDays || 0, active: r.active !== false, note: r.note || '' });
 
 function saveFail(e) {
   console.error(e);
@@ -523,7 +545,7 @@ function logout() {
   closeOverlay('seatOverlay');
   saveSession(null);
   companyId = null; me = null; myMemberships = []; myCompanies = []; companyInfo = null;
-  cases = []; adjustments = []; withdrawals = []; settings = {}; partners = ['Partner 1', 'Partner 2', 'Partner 3'];
+  cases = []; adjustments = []; withdrawals = []; recurring = []; settings = {}; partners = ['Partner 1', 'Partner 2', 'Partner 3'];
   render();
   showLogin();
 }
@@ -609,15 +631,17 @@ async function refreshData(showMsg) {
   lastLoadAt = Date.now();
   try {
     setCloudStatus('⏳ Loading…');
-    const [cs, adj, wd, st] = await Promise.all([
+    const [cs, adj, wd, st, rec] = await Promise.all([
       api(`/rest/v1/cases?company_id=eq.${companyId}&select=*&order=case_date.desc&limit=5000`),
       api(`/rest/v1/adjustments?company_id=eq.${companyId}&select=*&limit=5000`),
       api(`/rest/v1/withdrawals?company_id=eq.${companyId}&select=*&limit=5000`).catch(() => []),
       api(`/rest/v1/company_settings?company_id=eq.${companyId}&select=*`).catch(() => []),
+      api(`/rest/v1/recurring?company_id=eq.${companyId}&select=*&order=next_due.asc&limit=1000`).catch(() => []),
     ]);
     cases = cs.map(rowToCase);
     adjustments = adj.map(rowToAdj);
     withdrawals = wd.map(rowToWd);
+    recurring = (rec || []).map(rowToRec);
     const s = st[0] || {};
     if (Array.isArray(s.partners) && s.partners.length === 3) partners = s.partners;
     settings = { agents: s.agents || [], agentDefaults: s.agent_defaults || {}, editPassHash: s.edit_pass_hash || null };
@@ -756,7 +780,10 @@ const fmtN = n => {
 };
 const fmt = n => 'RM ' + fmtN(n);
 const pct = n => (Number(n) || 0).toLocaleString('en-MY', { maximumFractionDigits: 2 }) + '%';
-const today = () => new Date().toISOString().slice(0, 10);
+// LOCAL date (not UTC) — using toISOString() here would roll back a day in UTC+8 (Malaysia)
+const ymd = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const today = () => ymd(new Date());
+const parseYmd = s => { const [Y, M, D] = String(s).split('-').map(Number); return new Date(Y, (M || 1) - 1, D || 1); };
 const fmtDate = s => { if (!s) return ''; const [y, m, d] = String(s).split('-'); return (y && m && d) ? `${d}/${m}/${y}` : esc(s); };
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -871,6 +898,37 @@ const realizedProfitAll = () => cases.filter(c => !c.cancelledAt && computed(c).
 const withdrawnAll = () => sum(withdrawals);
 const expensesAll = () => adjustments.filter(a => a.isExpense).reduce((s, a) => s + (Number(a.amount) || 0), 0);
 
+/* ---------- recurring invoice reminders ---------- */
+function addInterval(dateStr, n, unit) {
+  const d = parseYmd(dateStr || today());
+  n = Number(n) || 1;
+  if (unit === 'day') d.setDate(d.getDate() + n);
+  else if (unit === 'week') d.setDate(d.getDate() + n * 7);
+  else {
+    // month: clamp to the last valid day so the 31st doesn't spill into the next month
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + n);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, lastDay));
+  }
+  return ymd(d);
+}
+// days from today until the given date (negative = overdue)
+function daysUntil(dateStr) {
+  if (!dateStr) return 9999;
+  return Math.round((parseYmd(dateStr) - parseYmd(today())) / 86400000);
+}
+const recIsDue = r => !!r.active && !!r.nextDue && daysUntil(r.nextDue) <= (Number(r.leadDays) || 0);
+const recDueList = () => recurring.filter(recIsDue).sort((a, b) => (a.nextDue || '').localeCompare(b.nextDue || ''));
+// roll the due date forward until it lands in the future (so you never stay perpetually overdue)
+function rollNextDue(r) {
+  let d = addInterval(r.nextDue || today(), r.everyN, r.everyUnit);
+  let guard = 0;
+  while (daysUntil(d) <= 0 && guard++ < 120) d = addInterval(d, r.everyN, r.everyUnit);
+  return d;
+}
+
 function renderSummary(list, rangeOn) {
   const open = list.filter(c => !computed(c).closed);
   const closedCases = list.filter(c => computed(c).closed);
@@ -895,7 +953,9 @@ function renderSummary(list, rangeOn) {
       <div class="value ${balanceProfit < 0 ? 'red' : 'green'}">${fmt(balanceProfit)}</div>
       <div style="font-size:11px;margin-top:4px">tap for partners &amp; withdrawals</div>
     </div>` : '';
+  const dueRec = recDueList().length;
   document.getElementById('summaryCards').innerHTML = featureCards + `
+    <div class="card" style="cursor:pointer${dueRec ? ';border:1px solid var(--amber)' : ''}" title="Recurring invoices due — click to view and generate" onclick="openRecurring()"><div class="label">🔁 Recurring Due</div><div class="value ${dueRec ? 'amber' : ''}">${dueRec}</div><div style="font-size:11px;margin-top:2px;color:var(--muted)">tap to view</div></div>
     <div class="card" style="cursor:pointer" title="Click to see only Open cases" onclick="filterByStatus('open')"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
     <div class="card" style="cursor:pointer" title="Click to see only Closed cases" onclick="filterByStatus('closed')"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
     <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
@@ -1090,6 +1150,11 @@ function openCaseForm(id) {
   if (c && computed(c).closed && !isUnlocked(id)) { notify('🔒 Closed case — open it with Update and unlock with your password first.', true); return; }
   closeAllOverlays();
   editingId = id || null;
+  pendingRecId = null;                                   // fresh form: not from a recurring template yet
+  const recWrap = document.getElementById('recPickWrap');
+  const recBox = document.getElementById('recPicker');
+  if (recBox) { recBox.style.display = 'none'; recBox.innerHTML = ''; }
+  if (recWrap) recWrap.style.display = c ? 'none' : '';  // only offer "Fill from Recurring" on NEW cases
   const agents = agentNames();
   const currentPicVal = c ? (c.pic || '') : '';
   document.getElementById('f_pic_select').innerHTML =
@@ -1172,6 +1237,9 @@ async function saveCaseForm() {
       cases.unshift(rowToCase(rows[0]));
     }
   } catch (e) { saveFail(e); return; }
+
+  // if this new case came from a recurring template, roll its next reminder forward
+  if (!wasEditing) await advanceRecurringAfterSave(amount);
 
   // remember this agent and their rates for next time
   if (!(settings.agents || []).includes(pic)) settings.agents = [...(settings.agents || []), pic];
@@ -1800,6 +1868,220 @@ async function checkUpdate() {
       setTimeout(() => location.reload(), 900);
     } else notify('You are on the latest version ✓');
   } catch (e) { notify('Could not check — no internet?', true); }
+}
+
+/* ---------- recurring invoices (reminders you approve — nothing auto-created) ---------- */
+let editingRecId = null;
+let pendingRecId = null;   // the template the currently-open New Case form was filled from
+
+function openRecurring() {
+  if (!guardActive()) return;
+  closeAllOverlays();
+  editingRecId = null;
+  renderRecurring();
+  document.getElementById('recurringOverlay').classList.add('show');
+}
+
+function recStatusBadge(r) {
+  if (!r.active) return `<span class="badge none">Paused</span>`;
+  if (!r.nextDue) return `<span class="badge none">No date</span>`;
+  const dl = daysUntil(r.nextDue);
+  if (dl < 0) return `<span class="badge" style="background:var(--red-soft);color:var(--red)">Overdue ${-dl}d</span>`;
+  if (dl === 0) return `<span class="badge" style="background:var(--amber-soft);color:var(--amber)">Due today</span>`;
+  if (recIsDue(r)) return `<span class="badge" style="background:var(--amber-soft);color:var(--amber)">Due in ${dl}d</span>`;
+  return `<span class="badge">in ${dl}d</span>`;
+}
+
+function renderRecurring() {
+  const list = [...recurring].sort((a, b) => (a.nextDue || '9999').localeCompare(b.nextDue || '9999'));
+  const rows = list.map(r => `<tr>
+    <td><b>${esc(r.customer)}</b><div style="font-size:11px;color:var(--muted)">${esc(r.agent || '-')} · ${r.sellingPct}/${r.costPct}/${r.referralPct}%${r.referralName ? ' · ' + esc(r.referralName) : ''}</div></td>
+    <td>${r.nextDue ? fmtDate(r.nextDue) : '—'}<div style="font-size:11px;color:var(--muted)">every ${r.everyN} ${r.everyUnit}${r.everyN > 1 ? 's' : ''} · remind ${r.leadDays}d before</div></td>
+    <td class="num">${fmtN(r.amount)}</td>
+    <td>${recStatusBadge(r)}</td>
+    <td style="white-space:nowrap">
+      <button class="btn-primary btn-small" onclick="generateFromRecurring('${r.id}')">Generate</button>
+      <button class="btn-secondary btn-small" onclick="editRecurring('${r.id}')">Edit</button>
+      <button class="btn-secondary btn-small" onclick="toggleRecurringActive('${r.id}')">${r.active ? 'Pause' : 'Resume'}</button>
+      <button class="btn-danger btn-small" onclick="deleteRecurring('${r.id}')">×</button>
+    </td>
+  </tr>`).join('');
+
+  const e = editingRecId ? recurring.find(r => r.id === editingRecId) : null;
+  const agents = agentNames();
+  document.getElementById('recurringBody').innerHTML = `
+    <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Reminders only — nothing is ever created automatically. When one is due, click <b>Generate</b>, check the amount and date, then Save.</div>
+
+    <div class="leg">
+      <h3 style="margin-bottom:8px">Recurring clients</h3>
+      ${list.length ? `<table><thead><tr><th>Client</th><th>Next due</th><th class="num">Suggested</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table>`
+      : '<div style="color:var(--muted);font-size:13px">No recurring clients yet — add one below.</div>'}
+    </div>
+
+    <div class="leg" style="margin-top:14px">
+      <h3 style="margin-bottom:8px">${e ? 'Edit recurring client' : 'Add a recurring client'}</h3>
+      <div class="form-grid">
+        <div class="field full"><label>Company</label><input type="text" id="r_company" value="${e ? esc(e.customer) : ''}" placeholder="Company name"></div>
+        <div class="field full"><label>Agent</label>
+          <select id="r_agent">${agents.length ? agents.map(a => `<option value="${esc(a)}" ${e && e.agent === a ? 'selected' : ''}>${esc(a)}</option>`).join('') : '<option value="">(no agents yet)</option>'}</select>
+        </div>
+        <div class="field"><label>Suggested Amount (RM)</label><input type="number" id="r_amount" step="0.01" min="0" value="${e ? e.amount : ''}"></div>
+        <div class="field"><label>Next Due Date</label><input type="date" id="r_next" value="${e && e.nextDue ? e.nextDue : today()}"></div>
+        <div class="field"><label>Repeat every</label><input type="number" id="r_everyN" min="1" step="1" value="${e ? e.everyN : 1}"></div>
+        <div class="field"><label>Unit</label>
+          <select id="r_everyUnit">
+            <option value="day" ${e && e.everyUnit === 'day' ? 'selected' : ''}>Day(s)</option>
+            <option value="week" ${e && e.everyUnit === 'week' ? 'selected' : ''}>Week(s)</option>
+            <option value="month" ${!e || e.everyUnit === 'month' ? 'selected' : ''}>Month(s)</option>
+          </select>
+        </div>
+        <div class="field"><label>Remind me (days before)</label><input type="number" id="r_lead" min="0" step="1" value="${e ? e.leadDays : 3}"></div>
+        <div class="field"><label>Selling %</label><input type="number" id="r_selling" step="0.01" min="0" value="${e ? e.sellingPct : ''}"></div>
+        <div class="field"><label>Cost %</label><input type="number" id="r_cost" step="0.01" min="0" value="${e ? e.costPct : 1}"></div>
+        <div class="field"><label>Referral %</label><input type="number" id="r_referral" step="0.01" min="0" value="${e ? e.referralPct : 0}"></div>
+        <div class="field"><label>Referral Name (optional)</label><input type="text" id="r_referralName" value="${e ? esc(e.referralName) : ''}"></div>
+      </div>
+      <div style="margin-top:10px">
+        <button class="btn-primary btn-small" onclick="saveRecurring()">${e ? 'Save Changes' : 'Add Recurring'}</button>
+        ${e ? `<button class="btn-secondary btn-small" onclick="cancelEditRecurring()">Cancel</button>` : ''}
+      </div>
+    </div>`;
+}
+
+function editRecurring(id) { editingRecId = id; renderRecurring(); }
+function cancelEditRecurring() { editingRecId = null; renderRecurring(); }
+
+async function saveRecurring() {
+  if (!guardActive()) return;
+  const customer = document.getElementById('r_company').value.trim();
+  if (!customer) { notify('Please enter the company name.', true); return; }
+  const data = {
+    customer,
+    agent: document.getElementById('r_agent').value || '',
+    amount: Number(document.getElementById('r_amount').value) || 0,
+    nextDue: document.getElementById('r_next').value || today(),
+    everyN: Math.max(1, Number(document.getElementById('r_everyN').value) || 1),
+    everyUnit: document.getElementById('r_everyUnit').value || 'month',
+    leadDays: Math.max(0, Number(document.getElementById('r_lead').value) || 0),
+    sellingPct: Number(document.getElementById('r_selling').value) || 0,
+    costPct: Number(document.getElementById('r_cost').value) || 0,
+    referralPct: Number(document.getElementById('r_referral').value) || 0,
+    referralName: document.getElementById('r_referralName').value.trim(),
+    active: true
+  };
+  if (data.sellingPct - data.costPct - data.referralPct <= 0) {
+    notify('No profit! Selling % must be higher than Cost % + Referral %.', true); return;
+  }
+  try {
+    if (editingRecId) {
+      const r = recurring.find(x => x.id === editingRecId);
+      const merged = { ...r, ...data, active: r.active };
+      await api(`/rest/v1/recurring?id=eq.${editingRecId}`, { method: 'PATCH', body: JSON.stringify(recToRow(merged)) });
+      Object.assign(r, merged);
+    } else {
+      const rows = await api('/rest/v1/recurring', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(recToRow(data)) });
+      recurring.push(rowToRec(rows[0]));
+    }
+  } catch (err) { saveFail(err); return; }
+  editingRecId = null;
+  render(); renderRecurring();
+  notify('Recurring saved ✓');
+}
+
+async function toggleRecurringActive(id) {
+  if (!guardActive()) return;
+  const r = recurring.find(x => x.id === id); if (!r) return;
+  const merged = { ...r, active: !r.active };
+  try { await api(`/rest/v1/recurring?id=eq.${id}`, { method: 'PATCH', body: JSON.stringify(recToRow(merged)) }); }
+  catch (err) { saveFail(err); return; }
+  r.active = merged.active;
+  render(); renderRecurring();
+}
+
+let pendingRecDelete = null;
+async function deleteRecurring(id) {
+  if (!guardActive()) return;
+  if (pendingRecDelete !== id) {
+    pendingRecDelete = id;
+    notify('Click × again to remove this recurring client.', true);
+    setTimeout(() => { pendingRecDelete = null; }, 5000);
+    return;
+  }
+  pendingRecDelete = null;
+  try { await api(`/rest/v1/recurring?id=eq.${id}`, { method: 'DELETE' }); }
+  catch (err) { saveFail(err); return; }
+  recurring = recurring.filter(x => x.id !== id);
+  render(); renderRecurring();
+  notify('Recurring removed.');
+}
+
+/* --- generate a case from a template: always pre-filled for YOUR approval --- */
+function prefillFormFromRec(r) {
+  document.getElementById('f_date').value = r.nextDue || today();
+  document.getElementById('f_amount').value = r.amount || '';
+  document.getElementById('f_company').value = r.customer || '';
+  const sel = document.getElementById('f_pic_select');
+  if (sel && [...sel.options].some(o => o.value === r.agent)) { sel.value = r.agent; }
+  document.getElementById('f_selling').value = r.sellingPct;
+  document.getElementById('f_cost').value = r.costPct;
+  document.getElementById('f_referral').value = r.referralPct;
+  document.getElementById('f_referralName').value = r.referralName || '';
+  updatePreview();
+}
+
+function generateFromRecurring(id) {
+  const r = recurring.find(x => x.id === id); if (!r) return;
+  closeOverlay('recurringOverlay');
+  openCaseForm();        // fresh New Case form (this clears pendingRecId)
+  pendingRecId = id;     // so we can roll the due date forward after saving
+  prefillFormFromRec(r);
+  notify('Loaded from recurring — check the amount and date, then Save Case.');
+}
+
+function togglePickRecurring() {
+  const box = document.getElementById('recPicker');
+  if (!box) return;
+  if (box.style.display !== 'none') { box.style.display = 'none'; return; }
+  box.innerHTML = recurring.some(r => r.active)
+    ? `<input type="text" id="recSearch" placeholder="Search company…" oninput="renderRecPickList()" style="width:100%;margin-bottom:6px;padding:7px 9px;border:1px solid var(--border);border-radius:8px;font-size:13px">
+       <div id="recPickList"></div>`
+    : '<div style="color:var(--muted);font-size:13px">No recurring clients yet — add them from the 🔁 Recurring card on the dashboard.</div>';
+  box.style.display = '';
+  renderRecPickList();
+}
+
+function renderRecPickList() {
+  const el = document.getElementById('recPickList');
+  if (!el) return;
+  const sEl = document.getElementById('recSearch');
+  const q = (sEl ? sEl.value : '').trim().toLowerCase();
+  const list = recurring.filter(r => r.active && (!q || (r.customer || '').toLowerCase().includes(q)));
+  el.innerHTML = list.length ? list.map(r => `
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;margin-bottom:5px">
+      <div style="font-size:13px"><b>${esc(r.customer)}</b><div style="font-size:11px;color:var(--muted)">next ${r.nextDue ? fmtDate(r.nextDue) : '—'} · ${fmtN(r.amount)}</div></div>
+      <button class="btn-primary btn-small" onclick="pickRec('${r.id}')">Use</button>
+    </div>`).join('') : '<div style="color:var(--muted);font-size:13px">No match.</div>';
+}
+
+function pickRec(id) {
+  const r = recurring.find(x => x.id === id); if (!r) return;
+  pendingRecId = id;
+  prefillFormFromRec(r);
+  document.getElementById('recPicker').style.display = 'none';
+  notify('Filled from recurring — check the amount and date.');
+}
+
+// after a new case is saved from a template, roll its next due date forward
+async function advanceRecurringAfterSave(amountUsed) {
+  if (!pendingRecId) return;
+  const r = recurring.find(x => x.id === pendingRecId);
+  pendingRecId = null;
+  if (!r) return;
+  const merged = { ...r, nextDue: rollNextDue(r), amount: amountUsed || r.amount };
+  try { await api(`/rest/v1/recurring?id=eq.${r.id}`, { method: 'PATCH', body: JSON.stringify(recToRow(merged)) }); }
+  catch (err) { return; }
+  Object.assign(r, merged);
+  notify(`Next reminder for ${r.customer}: ${fmtDate(r.nextDue)}`);
 }
 
 /* ---------- page navigation (remembers where you are) ---------- */
