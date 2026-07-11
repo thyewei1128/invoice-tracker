@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Invoice Tracker | DLS Technology</title>
 <link rel="manifest" href="manifest.webmanifest">
 <meta name="theme-color" content="#1F4D63">
@@ -124,8 +124,12 @@
   .legcell .amt { font-size: 12px; color: var(--muted); margin-top: 3px; font-variant-numeric: tabular-nums; }
 
   /* Modal */
-  .overlay { position: fixed; inset: 0; background: rgba(20,22,28,0.45); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; z-index: 50; }
+  /* height:100dvh tracks the VISIBLE area, so the on-screen keyboard shrinks the popup
+     instead of pushing it out of alignment. z-index sits above the bottom nav (60). */
+  .overlay { position: fixed; inset: 0; height: 100dvh; background: rgba(20,22,28,0.45); display: none; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; z-index: 75; }
   .overlay.show { display: flex; }
+  /* while a popup is open, hide the floating bottom nav — it otherwise overlaps and jumps with the keyboard */
+  body:has(.overlay.show) .bottomnav { display: none !important; }
   .modal { background: var(--card); border-radius: 14px; width: 100%; max-width: 860px; padding: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.25); position: relative; }
   .modal h2 { font-size: 18px; margin-bottom: 16px; padding-right: 36px; }
   .modal-x { position: absolute; top: 12px; right: 12px; width: 36px; height: 36px; border-radius: 50%; background: var(--accent-soft); color: var(--accent); font-size: 16px; font-weight: 700; border: none; display: flex; align-items: center; justify-content: center; z-index: 2; }
@@ -249,8 +253,11 @@
     .leg td.num { font-size: 11px; }
     .leg input, .leg select { font-size: 13px; }
     /* pop-ups sit slightly smaller over the page, scroll inside, X to close */
-    .overlay { padding: 22px 12px 110px; }
-    .modal { padding: 16px 14px; max-height: 80vh; overflow-y: auto; border-radius: 16px; }
+    /* dvh (not vh) so the popup resizes when the keyboard opens; nav is hidden so no 110px gap needed */
+    .overlay { padding: 16px 12px 24px; align-items: flex-start; }
+    .modal { padding: 16px 14px; max-height: calc(100dvh - 40px); overflow-y: auto; border-radius: 16px; overscroll-behavior: contain; }
+    /* keep a focused field clear of the very bottom edge when the keyboard is up */
+    .modal input, .modal select { scroll-margin-bottom: 90px; }
     /* 16px inputs stop iPhone auto-zooming when typing */
     input, select, .txn-form input { font-size: 16px; }
     .txn-form input.amt { width: 120px; }
@@ -333,6 +340,23 @@
       <div class="field"><label>Referral Name (optional)</label><input type="text" id="f_referralName"></div>
     </div>
     <div class="calc-preview" id="calcPreview"></div>
+    <div id="recCreateWrap" style="margin-top:12px">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer">
+        <input type="checkbox" id="f_makeRecurring" onchange="toggleMakeRecurring()"> 🔁 Also set this client up as recurring
+      </label>
+      <div id="recCreateFields" style="display:none;margin-top:8px">
+        <div class="form-grid">
+          <div class="field"><label>Repeat every</label><input type="number" id="f_rec_everyN" min="1" step="1" value="1" onchange="syncRecNextDue()"></div>
+          <div class="field"><label>Unit</label>
+            <select id="f_rec_unit" onchange="syncRecNextDue()">
+              <option value="day">Day(s)</option><option value="week">Week(s)</option><option value="month" selected>Month(s)</option>
+            </select>
+          </div>
+          <div class="field"><label>Next Due Date</label><input type="date" id="f_rec_next"></div>
+          <div class="field"><label>Remind me (days before)</label><input type="number" id="f_rec_lead" min="0" step="1" value="3"></div>
+        </div>
+      </div>
+    </div>
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeOverlay('formOverlay')">Cancel</button>
       <button class="btn-primary" id="formSaveBtn" onclick="saveCaseForm()">Save Case</button>
@@ -416,7 +440,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.0.0 (9 Jul 2026)';
+const APP_VERSION = '3.1.0 (11 Jul 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -954,8 +978,10 @@ function renderSummary(list, rangeOn) {
       <div style="font-size:11px;margin-top:4px">tap for partners &amp; withdrawals</div>
     </div>` : '';
   const dueRec = recDueList().length;
+  const totalRec = recurring.length;
   document.getElementById('summaryCards').innerHTML = featureCards + `
-    <div class="card" style="cursor:pointer${dueRec ? ';border:1px solid var(--amber)' : ''}" title="Recurring invoices due — click to view and generate" onclick="openRecurring()"><div class="label">🔁 Recurring Due</div><div class="value ${dueRec ? 'amber' : ''}">${dueRec}</div><div style="font-size:11px;margin-top:2px;color:var(--muted)">tap to view</div></div>
+    <div class="card" style="cursor:pointer" title="All recurring clients — click to manage" onclick="openRecurring()"><div class="label">🔁 Recurring Cases</div><div class="value">${totalRec}</div><div style="font-size:11px;margin-top:2px;color:var(--muted)">tap to manage</div></div>
+    <div class="card" style="cursor:pointer${dueRec ? ';border:1.5px solid var(--red)' : ''}" title="Recurring invoices due now — click to generate" onclick="openRecurring()"><div class="label">🔔 Recurring Due</div><div class="value ${dueRec ? 'red' : ''}">${dueRec}</div><div style="font-size:11px;margin-top:2px;color:var(--muted)">tap to generate</div></div>
     <div class="card" style="cursor:pointer" title="Click to see only Open cases" onclick="filterByStatus('open')"><div class="label">Open Cases${tag}</div><div class="value">${open.length}</div></div>
     <div class="card" style="cursor:pointer" title="Click to see only Closed cases" onclick="filterByStatus('closed')"><div class="label">Closed Cases${tag}</div><div class="value">${closedCases.length}</div></div>
     <div class="card"><div class="label">Owed by Customers${tag}</div><div class="value amber">${fmt(outstandingCustomer)}</div></div>
@@ -1155,6 +1181,12 @@ function openCaseForm(id) {
   const recBox = document.getElementById('recPicker');
   if (recBox) { recBox.style.display = 'none'; recBox.innerHTML = ''; }
   if (recWrap) recWrap.style.display = c ? 'none' : '';  // only offer "Fill from Recurring" on NEW cases
+  const mk = document.getElementById('f_makeRecurring');
+  if (mk) mk.checked = false;
+  const mkFields = document.getElementById('recCreateFields');
+  if (mkFields) mkFields.style.display = 'none';
+  const mkWrap = document.getElementById('recCreateWrap');
+  if (mkWrap) mkWrap.style.display = c ? 'none' : '';    // only offer "make recurring" on NEW cases
   const agents = agentNames();
   const currentPicVal = c ? (c.pic || '') : '';
   document.getElementById('f_pic_select').innerHTML =
@@ -1239,7 +1271,14 @@ async function saveCaseForm() {
   } catch (e) { saveFail(e); return; }
 
   // if this new case came from a recurring template, roll its next reminder forward
+  const fromTemplate = !!pendingRecId;
   if (!wasEditing) await advanceRecurringAfterSave(amount);
+
+  // "Also set up as recurring" tick — skip if this case already came from a template
+  const mkRec = document.getElementById('f_makeRecurring');
+  if (!wasEditing && !fromTemplate && mkRec && mkRec.checked) {
+    await createRecurringFromForm({ company, pic, amount, sellingPct, costPct, referralPct, referralName: data.referralName, date });
+  }
 
   // remember this agent and their rates for next time
   if (!(settings.agents || []).includes(pic)) settings.agents = [...(settings.agents || []), pic];
@@ -1873,11 +1912,52 @@ async function checkUpdate() {
 /* ---------- recurring invoices (reminders you approve — nothing auto-created) ---------- */
 let editingRecId = null;
 let pendingRecId = null;   // the template the currently-open New Case form was filled from
+let recDelPwId = null;     // recurring row waiting for the password before it is deleted
+
+// shared: check the user's LOGIN password. true = correct, false = wrong, null = network problem
+async function verifyLoginPassword(v) {
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST', headers: { apikey: SUPA_ANON, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: session.user.email, password: v }) });
+    return res.ok;
+  } catch (e) { return null; }
+}
+
+/* --- "Also set this client up as recurring" tick on the New Case form --- */
+function syncRecNextDue() {
+  const d = document.getElementById('f_date').value || today();
+  const n = Math.max(1, Number(document.getElementById('f_rec_everyN').value) || 1);
+  const u = document.getElementById('f_rec_unit').value || 'month';
+  document.getElementById('f_rec_next').value = addInterval(d, n, u);
+}
+function toggleMakeRecurring() {
+  const on = document.getElementById('f_makeRecurring').checked;
+  document.getElementById('recCreateFields').style.display = on ? '' : 'none';
+  if (on) syncRecNextDue();
+}
+async function createRecurringFromForm(d) {
+  const n = Math.max(1, Number(document.getElementById('f_rec_everyN').value) || 1);
+  const u = document.getElementById('f_rec_unit').value || 'month';
+  const lead = Math.max(0, Number(document.getElementById('f_rec_lead').value) || 0);
+  const next = document.getElementById('f_rec_next').value || addInterval(d.date, n, u);
+  const tpl = { customer: d.company, agent: d.pic, amount: d.amount, sellingPct: d.sellingPct, costPct: d.costPct,
+    referralPct: d.referralPct, referralName: d.referralName || '', everyN: n, everyUnit: u,
+    nextDue: next, leadDays: lead, active: true };
+  try {
+    const rows = await api('/rest/v1/recurring', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(recToRow(tpl)) });
+    recurring.push(rowToRec(rows[0]));
+    notify(`🔁 Recurring set up for ${d.company} — next reminder ${fmtDate(next)}`);
+  } catch (e) {
+    notify('Case saved, but the recurring setup failed. You can add it from the 🔁 Recurring card.', true);
+  }
+}
 
 function openRecurring() {
   if (!guardActive()) return;
   closeAllOverlays();
   editingRecId = null;
+  recDelPwId = null;
   renderRecurring();
   document.getElementById('recurringOverlay').classList.add('show');
 }
@@ -1908,9 +1988,19 @@ function renderRecurring() {
   </tr>`).join('');
 
   const e = editingRecId ? recurring.find(r => r.id === editingRecId) : null;
-  const agents = agentNames();
+  const agents = [...new Set([...agentNames(), ...(e && e.agent ? [e.agent] : [])])].sort();
+  const delRec = recDelPwId ? recurring.find(r => r.id === recDelPwId) : null;
   document.getElementById('recurringBody').innerHTML = `
     <div style="font-size:13px;color:var(--muted);margin-bottom:10px">Reminders only — nothing is ever created automatically. When one is due, click <b>Generate</b>, check the amount and date, then Save.</div>
+
+    ${delRec ? `<div class="leg" style="background:var(--red-soft);border:1px solid var(--red);margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:var(--red);margin-bottom:8px">🔒 Enter your login password to delete “${esc(delRec.customer)}”</div>
+      <div class="txn-form">
+        <input type="password" class="note" id="recDelPass" placeholder="Login password" autocomplete="current-password">
+        <button class="btn-danger btn-small" onclick="confirmDeleteRecurring()">Confirm Delete</button>
+        <button class="btn-secondary btn-small" onclick="cancelDeleteRecurring()">Cancel</button>
+      </div>
+    </div>` : ''}
 
     <div class="leg">
       <h3 style="margin-bottom:8px">Recurring clients</h3>
@@ -1923,7 +2013,12 @@ function renderRecurring() {
       <div class="form-grid">
         <div class="field full"><label>Company</label><input type="text" id="r_company" value="${e ? esc(e.customer) : ''}" placeholder="Company name"></div>
         <div class="field full"><label>Agent</label>
-          <select id="r_agent">${agents.length ? agents.map(a => `<option value="${esc(a)}" ${e && e.agent === a ? 'selected' : ''}>${esc(a)}</option>`).join('') : '<option value="">(no agents yet)</option>'}</select>
+          <select id="r_agent" onchange="recAgentChanged()">
+            <option value="">— Select agent —</option>
+            ${agents.map(a => `<option value="${esc(a)}" ${e && e.agent === a ? 'selected' : ''}>${esc(a)}</option>`).join('')}
+            <option value="__new">➕ Add new agent…</option>
+          </select>
+          <input type="text" id="r_agent_new" placeholder="Type the new agent name" style="display:none;margin-top:6px">
         </div>
         <div class="field"><label>Suggested Amount (RM)</label><input type="number" id="r_amount" step="0.01" min="0" value="${e ? e.amount : ''}"></div>
         <div class="field"><label>Next Due Date</label><input type="date" id="r_next" value="${e && e.nextDue ? e.nextDue : today()}"></div>
@@ -1951,13 +2046,27 @@ function renderRecurring() {
 function editRecurring(id) { editingRecId = id; renderRecurring(); }
 function cancelEditRecurring() { editingRecId = null; renderRecurring(); }
 
+function recAgentChanged() {
+  const sel = document.getElementById('r_agent').value;
+  const txt = document.getElementById('r_agent_new');
+  txt.style.display = sel === '__new' ? '' : 'none';
+  if (sel === '__new') { txt.value = ''; txt.focus(); }
+}
+// the chosen agent: from the dropdown, or the typed name when "Add new agent" is picked
+function currentRecAgent() {
+  const sel = document.getElementById('r_agent').value;
+  return sel === '__new' ? document.getElementById('r_agent_new').value.trim() : sel;
+}
+
 async function saveRecurring() {
   if (!guardActive()) return;
   const customer = document.getElementById('r_company').value.trim();
   if (!customer) { notify('Please enter the company name.', true); return; }
+  const agent = currentRecAgent();
+  if (!agent) { notify('Please select an agent, or use “Add new agent” and type the name.', true); return; }
   const data = {
     customer,
-    agent: document.getElementById('r_agent').value || '',
+    agent,
     amount: Number(document.getElementById('r_amount').value) || 0,
     nextDue: document.getElementById('r_next').value || today(),
     everyN: Math.max(1, Number(document.getElementById('r_everyN').value) || 1),
@@ -1983,6 +2092,11 @@ async function saveRecurring() {
       recurring.push(rowToRec(rows[0]));
     }
   } catch (err) { saveFail(err); return; }
+  // remember a newly typed agent so it shows up in the dropdowns next time
+  if (!(settings.agents || []).includes(data.agent)) {
+    settings.agents = [...(settings.agents || []), data.agent];
+    upsertSettings().catch(() => {});
+  }
   editingRecId = null;
   render(); renderRecurring();
   notify('Recurring saved ✓');
@@ -1998,25 +2112,37 @@ async function toggleRecurringActive(id) {
   render(); renderRecurring();
 }
 
-let pendingRecDelete = null;
-async function deleteRecurring(id) {
+// deleting a recurring client needs the login password
+function deleteRecurring(id) {
   if (!guardActive()) return;
-  if (pendingRecDelete !== id) {
-    pendingRecDelete = id;
-    notify('Click × again to remove this recurring client.', true);
-    setTimeout(() => { pendingRecDelete = null; }, 5000);
-    return;
-  }
-  pendingRecDelete = null;
+  recDelPwId = id;
+  renderRecurring();
+  setTimeout(() => { const el = document.getElementById('recDelPass'); if (el) el.focus(); }, 50);
+}
+function cancelDeleteRecurring() { recDelPwId = null; renderRecurring(); }
+async function confirmDeleteRecurring() {
+  const id = recDelPwId;
+  if (!id) return;
+  const v = document.getElementById('recDelPass').value;
+  if (!v) { notify('Enter your login password.', true); return; }
+  const ok = await verifyLoginPassword(v);
+  if (ok === null) { notify('Could not verify — check your internet.', true); return; }
+  if (!ok) { notify('Wrong password.', true); return; }
   try { await api(`/rest/v1/recurring?id=eq.${id}`, { method: 'DELETE' }); }
   catch (err) { saveFail(err); return; }
   recurring = recurring.filter(x => x.id !== id);
+  recDelPwId = null;
   render(); renderRecurring();
-  notify('Recurring removed.');
+  notify('Recurring removed ✓');
 }
 
 /* --- generate a case from a template: always pre-filled for YOUR approval --- */
 function prefillFormFromRec(r) {
+  // this case already comes from a template — don't offer to create another one
+  const mkWrap = document.getElementById('recCreateWrap');
+  if (mkWrap) mkWrap.style.display = 'none';
+  const mk = document.getElementById('f_makeRecurring');
+  if (mk) mk.checked = false;
   document.getElementById('f_date').value = r.nextDue || today();
   document.getElementById('f_amount').value = r.amount || '';
   document.getElementById('f_company').value = r.customer || '';
