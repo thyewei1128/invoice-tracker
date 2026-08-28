@@ -88,6 +88,7 @@
   .btn-small { padding: 5px 9px; font-size: 12px; }
 
   #tableWrap { overflow-x: auto; border-radius: 10px; }
+  .case-cards { display: none; }   /* phone-only card view of the case list */
   table { width: 100%; border-collapse: collapse; background: var(--card); border-radius: 10px; overflow: hidden; border: 1px solid var(--border); }
   th.actions-col, td.actions-col { position: sticky; right: 0; background: var(--card); box-shadow: -6px 0 8px -6px rgba(0,0,0,0.18); white-space: nowrap; }
   th.actions-col { background: var(--accent-soft); }
@@ -267,6 +268,34 @@
     .txn-form input.amt { width: 120px; }
     button { padding: 10px 14px; }
     .btn-small { padding: 8px 10px; font-size: 13px; }
+
+    /* ===== phone: cases as cards instead of a wide scrolling table ===== */
+    #tableWrap { overflow-x: visible; }
+    #tableWrap > table { display: none; }              /* hide the wide table */
+    .case-cards { display: flex; flex-direction: column; gap: 10px; }
+    .ccard { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 13px 14px; box-shadow: 0 1px 3px rgba(20,57,71,0.06); }
+    .ccard:active { background: #FBF7F0; }
+    .ccard.from-rec { border-left: 4px solid var(--accent); background: #F4FAFC; }
+    .ccard.cancelled { opacity: 0.6; }
+    .cc-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
+    .cc-title { font-weight: 800; font-size: 15px; color: var(--text); line-height: 1.25; }
+    .cc-ref { font-size: 11px; color: var(--muted); font-weight: 500; margin-top: 1px; }
+    .cc-meta { font-size: 12px; color: var(--muted); margin-top: 3px; }
+    .cc-figs { display: flex; gap: 10px; margin: 10px 0; }
+    .cc-fig { flex: 1; background: var(--bg); border-radius: 9px; padding: 7px 10px; min-width: 0; }
+    .cc-fig-label { display: block; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+    .cc-fig-val { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .cc-fig-val.green { color: var(--green); }
+    .cc-inv { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 12px; color: var(--muted); font-weight: 600; }
+    .cc-legs { display: flex; flex-direction: column; gap: 9px; }
+    .cc-leg-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .cc-leg-name { font-size: 12px; font-weight: 600; color: var(--text); }
+    .cc-leg-amt { font-size: 11px; color: var(--muted); font-variant-numeric: tabular-nums; margin-top: 2px; }
+    .cc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .cc-actions button { flex: 1; min-width: 70px; }
+    .cc-totals { background: var(--accent-soft); border: 1px solid var(--tan-3); border-radius: 14px; padding: 12px 14px; }
+    .cc-tot-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; padding: 3px 0; }
+    .cc-tot-row b { font-variant-numeric: tabular-nums; }
   }
 </style>
 </head>
@@ -456,7 +485,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.2.0 (11 Jul 2026)';
+const APP_VERSION = '3.3.0 (28 Aug 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1031,6 +1060,62 @@ function totalRow(label, t, n) {
   </tr>`;
 }
 
+/* ---------- phone card view (one card per case, no sideways scroll) ---------- */
+function caseCardHTML(c, x) {
+  const leg = (name, status, got, target) => {
+    const pc = target > 0 ? Math.min(100, got / target * 100) : 100;
+    const label = { full: 'Full', partial: 'Partial', none: 'No' }[status];
+    return `<div class="cc-leg">
+      <div class="cc-leg-top"><span class="cc-leg-name">${name}</span><span class="badge ${status}">${label}</span></div>
+      <div class="cc-leg-amt">${fmt(got)} / ${fmt(target)}</div>
+      <div class="pbar"><div style="width:${pc}%"></div></div>
+    </div>`;
+  };
+  const statusBadge = c.cancelledAt ? '<span class="badge none">Cancelled</span>'
+    : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>');
+  return `<div class="ccard ${c.recurringId ? 'from-rec' : ''} ${c.cancelledAt ? 'cancelled' : ''}" onclick="openDetail('${c.id}')">
+    <div class="cc-head">
+      <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</div>${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
+      ${statusBadge}
+    </div>
+    <div class="cc-meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '—'}</div>
+    <div class="cc-figs">
+      <div class="cc-fig"><span class="cc-fig-label">Amount</span><span class="cc-fig-val">${fmt(x.amount)}</span></div>
+      <div class="cc-fig"><span class="cc-fig-label">Profit</span><span class="cc-fig-val green">${fmt(x.displayProfit)} · ${pct(x.displayPct)}</span></div>
+    </div>
+    <div class="cc-inv" onclick="event.stopPropagation()">Invoice issued:
+      ${c.invoiceIssued
+        ? `<span class="badge full clickable" onclick="toggleInvoice('${c.id}')">Yes</span>`
+        : `<span class="badge none clickable" onclick="toggleInvoice('${c.id}')">No</span>`}
+    </div>
+    <div class="cc-legs">
+      ${leg('1 · Customer paid', x.sCustomer, x.recvCustomer, x.expectedCustomer)}
+      ${leg('2 · Supplier cash in', x.sSupplier, x.recvSupplier, x.expectedSupplier)}
+      ${leg('3 · Paid to client', x.sPayout, x.paidClient, x.expectedPayout)}
+    </div>
+    <div class="cc-actions" onclick="event.stopPropagation()">
+      <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${c.cancelledAt ? 'View' : 'Update'}</button>
+      ${c.cancelledAt
+        ? (userRole === 'owner' ? `<button class="btn-secondary btn-small" onclick="restoreCase('${c.id}')">↩️ Restore</button>` : '')
+        : `<button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button><button class="btn-danger btn-small" ${pendingCancel === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="cancelCase('${c.id}')">${pendingCancel === c.id ? 'Confirm?' : 'Cancel'}</button>`}
+      ${userRole === 'owner' ? `<button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function mobileTotalsCard(list) {
+  const active = list.filter(r => !r.c.cancelledAt);
+  const t = sumUp(active);
+  const n = active.length;
+  return `<div class="cc-totals">
+    <div class="cc-tot-row"><span><b>Grand Total</b> · ${n} case${n === 1 ? '' : 's'}</span><b>${fmt(t.amount)}</b></div>
+    <div class="cc-tot-row"><span style="color:var(--muted)">Customer paid</span><b>${fmt(t.recvC)} / ${fmt(t.expC)}</b></div>
+    <div class="cc-tot-row"><span style="color:var(--muted)">Supplier cash in</span><b>${fmt(t.recvS)} / ${fmt(t.expS)}</b></div>
+    <div class="cc-tot-row"><span style="color:var(--muted)">Paid to client</span><b>${fmt(t.paid)} / ${fmt(t.expP)}</b></div>
+    <div class="cc-tot-row" style="border-top:1px solid var(--tan-3); margin-top:4px; padding-top:7px"><span>Profit</span><b style="color:var(--green)">${fmt(t.profit)}</b></div>
+  </div>`;
+}
+
 /* ---------- table ---------- */
 function legBadge(status, got, target) {
   const labels = { full: 'Full', partial: 'Partial', none: 'No' };
@@ -1141,6 +1226,10 @@ function render() {
       ${totalRow('Grand Total', sumUp(list.filter(r => !r.c.cancelledAt)), list.filter(r => !r.c.cancelledAt).length)}
     </tfoot>
   </table>
+  <div class="case-cards">
+    ${pageList.map(({ c, x }) => caseCardHTML(c, x)).join('')}
+    ${mobileTotalsCard(list)}
+  </div>
   <div class="pager">
     <span class="pager-left">${start + 1}–${Math.min(start + perPage, total)} of ${total}</span>
     <span class="pager-center">
