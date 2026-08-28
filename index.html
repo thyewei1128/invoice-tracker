@@ -210,7 +210,7 @@
 
   /* Phone-friendly layout */
   @media (max-width: 640px) {
-    body { padding: 12px; padding-bottom: 84px; }
+    body { padding: 12px; padding-bottom: calc(104px + env(safe-area-inset-bottom)); }
     /* floating translucent pill bar, Instagram style — slim, icons centered */
     .bottomnav {
       position: fixed; left: 12px; right: 12px; bottom: calc(6px + env(safe-area-inset-bottom)); z-index: 60;
@@ -485,7 +485,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.3.0 (28 Aug 2026)';
+const APP_VERSION = '3.3.1 (28 Aug 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1656,15 +1656,16 @@ async function toggleInvoice(id) {
 function openCash() { financeTab = 'cash'; openFinance(); }
 
 function cashBookHTML() {
-  const moves = cashMovements();
+  const moves = cashMovements();                       // oldest → newest
+  // compute the running balance chronologically, then show newest at the top
   let running = 0;
-  const rows = moves.map(m => {
-    running += m.amount;
+  const withBal = moves.map(m => { running += m.amount; return { m, bal: running }; });
+  const rows = withBal.slice().reverse().map(({ m, bal }) => {
     return `<tr>
       <td>${fmtDate(m.date)}</td>
       <td>${esc(m.label)}${m.note ? `<div style="font-size:11px;color:var(--muted)">${esc(m.note)}</div>` : ''}</td>
       <td class="num" style="color:${m.amount >= 0 ? 'var(--green)' : 'var(--red)'}">${m.amount >= 0 ? '+' : '−'}${fmtN(Math.abs(m.amount))}</td>
-      <td class="num"><b>${fmtN(running)}</b></td>
+      <td class="num"><b>${fmtN(bal)}</b></td>
       <td>${m.adjId ? `<button class="btn-danger btn-small" onclick="deleteAdjustment('${m.adjId}')">×</button>` : ''}</td>
     </tr>`;
   }).join('');
