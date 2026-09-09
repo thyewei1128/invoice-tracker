@@ -521,7 +521,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.6.0 (09 Sep 2026)';
+const APP_VERSION = '3.6.1 (09 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1582,24 +1582,32 @@ function parseInvoiceText(text) {
   const pref = amounts.find(a => /grand|payable|due|nett/.test(a.label));
   if (pref) amount = pref.v; else if (amounts.length) amount = Math.max(...amounts.map(a => a.v));
 
-  // invoice number
+  // invoice number: labelled first, then an inline code like INV0088 / IV-777
   let invoiceNo = '';
   const im = joined.match(/(?:tax\s*invoice|invoice|inv|document|doc|bill)\s*(?:no|number|#|no\.)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\/\-]{2,})/i);
   if (im) invoiceNo = im[1].replace(/[.,;:]$/, '');
+  if (!invoiceNo) {
+    const im2 = joined.match(/\b((?:INV|IV|INVOICE|BILL|DOC|TI)[A-Za-z]*[-\/]?\d[\w\/\-]*)\b/i);
+    if (im2) invoiceNo = im2[1].replace(/[.,;:]$/, '');
+  }
 
   // date
   let date = '';
   const dm = joined.match(/(?:invoice\s*date|date)\s*[:\-]?\s*(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/i) || joined.match(/(\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4})/);
   if (dm) date = normalizeScanDate(dm[1]);
 
-  // client company: the line after "Bill To" / "To" / "Customer"
+  // client company: labelled (Bill To / Client / Customer …), else a name ending in a MY company suffix
   let company = '';
   for (let i = 0; i < lines.length; i++) {
-    if (/^(bill\s*to|sold\s*to|customer|to)\b\s*[:\-]?/i.test(lines[i])) {
-      const after = lines[i].replace(/^(bill\s*to|sold\s*to|customer|to)\b\s*[:\-]?/i, '').trim();
+    if (/^(bill\s*to|sold\s*to|customer|client|to)\b\s*[:\-]?/i.test(lines[i])) {
+      const after = lines[i].replace(/^(bill\s*to|sold\s*to|customer|client|to)\b\s*[:\-]?/i, '').trim();
       company = after || (lines[i + 1] || '');
       break;
     }
+  }
+  if (!company) {
+    const cm = joined.match(/([A-Z][A-Za-z0-9&.,'()\- ]{2,60}?(?:Sdn\.?\s*Bhd|Bhd|Enterprise|Trading|Resources|Services|Holdings|Industries|Logistics|Marketing))\b/i);
+    if (cm) company = cm[1].trim();
   }
   return { invoiceNo, amount, company, date };
 }
