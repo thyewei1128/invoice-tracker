@@ -149,6 +149,11 @@
   .field input, .field select { width: 100%; padding: 9px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; background: var(--card); }
   .field input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
   .field input[type="date"] { -webkit-appearance: none; appearance: none; min-height: 40px; text-align: left; }
+  .inv-row { display: flex; gap: 6px; margin-bottom: 6px; align-items: center; }
+  .inv-row .inv-no { flex: 1.3; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
+  .inv-row .inv-amt { flex: 1; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; text-align: right; }
+  .inv-row .inv-del { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--red-soft); color: var(--red); border: none; font-size: 15px; font-weight: 700; padding: 0; }
+  @media (max-width: 640px) { .inv-row .inv-no, .inv-row .inv-amt { font-size: 16px; } }
 
   .calc-preview { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; margin-top: 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
   .calc-preview b { font-variant-numeric: tabular-nums; }
@@ -361,7 +366,12 @@
     </div>
     <div class="form-grid">
       <div class="field"><label>Date</label><input type="date" id="f_date"></div>
-      <div class="field"><label>Invoice Amount (RM)</label><input type="number" id="f_amount" step="0.01" min="0" oninput="updatePreview()"></div>
+      <div class="field"><label>Total Amount (RM)</label><input type="number" id="f_amount" readonly tabindex="-1" style="background:var(--accent-soft); font-weight:800"></div>
+      <div class="field full">
+        <label>Invoices <span style="color:var(--muted); font-weight:400">— add each invoice number &amp; its amount</span></label>
+        <div id="f_invoices"></div>
+        <button type="button" class="btn-secondary btn-small" style="margin-top:6px" onclick="addInvoiceRow()">➕ Add Invoice</button>
+      </div>
       <div class="field full"><label>Company</label><input type="text" id="f_company" placeholder="Company name"></div>
       <div class="field full"><label>Agent</label>
         <select id="f_pic_select" onchange="agentSelectChanged()"></select>
@@ -485,7 +495,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.3.1 (28 Aug 2026)';
+const APP_VERSION = '3.4.0 (09 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -543,11 +553,16 @@ const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic:
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
   forceClosed: !!r.force_closed, recurringId: r.recurring_id || null,
+  invoices: Array.isArray(r.invoices) ? r.invoices : [],
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
   createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
   cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null });
+// when invoices exist, the case total (amount) is always their sum
+const invoicesTotal = list => (Array.isArray(list) ? list : []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
-  amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
+  amount: (Array.isArray(c.invoices) && c.invoices.length) ? invoicesTotal(c.invoices) : (c.amount || 0),
+  invoices: Array.isArray(c.invoices) ? c.invoices : [],
+  selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
   force_closed: !!c.forceClosed, recurring_id: c.recurringId || null,
   referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
@@ -1060,6 +1075,16 @@ function totalRow(label, t, n) {
   </tr>`;
 }
 
+// short summary of a case's invoice numbers for the list ("INV-1, INV-2" or "INV-1 +2 more")
+function invNoSummary(c) {
+  const list = c.invoices || [];
+  if (!list.length) return '';
+  const nos = list.map(i => (i.no || '').trim()).filter(Boolean);
+  if (!nos.length) return `${list.length} invoice${list.length > 1 ? 's' : ''}`;
+  if (nos.length <= 2) return nos.join(', ');
+  return `${nos[0]} +${nos.length - 1} more`;
+}
+
 /* ---------- phone card view (one card per case, no sideways scroll) ---------- */
 function caseCardHTML(c, x) {
   const leg = (name, status, got, target) => {
@@ -1075,7 +1100,7 @@ function caseCardHTML(c, x) {
     : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>');
   return `<div class="ccard ${c.recurringId ? 'from-rec' : ''} ${c.cancelledAt ? 'cancelled' : ''}" onclick="openDetail('${c.id}')">
     <div class="cc-head">
-      <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</div>${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
+      <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</div>${invNoSummary(c) ? `<div class="cc-ref">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
       ${statusBadge}
     </div>
     <div class="cc-meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '—'}</div>
@@ -1201,7 +1226,7 @@ function render() {
     ${pageList.map(({ c, x }) => `
       <tr class="row ${c.recurringId ? 'from-rec' : ''}" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
         <td>${fmtDate(c.date)}</td>
-        <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
+        <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${invNoSummary(c) ? `<div style="font-size:11px;color:var(--muted)">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
         <td class="num">${fmt(x.amount)}</td>
         <td onclick="event.stopPropagation()">${c.invoiceIssued
@@ -1303,13 +1328,51 @@ function openCaseForm(id) {
   document.getElementById('f_date').value = c ? c.date : today();
   document.getElementById('f_company').value = c ? c.company : '';
   document.getElementById('f_pic').value = '';
-  document.getElementById('f_amount').value = c ? c.amount : '';
+  // invoices: use the case's list; an older case with an amount but no invoices seeds one row
+  renderInvoiceRows(c ? ((c.invoices && c.invoices.length) ? c.invoices : (c.amount ? [{ no: '', amount: c.amount }] : [])) : []);
   document.getElementById('f_selling').value = c ? c.sellingPct : '';
   document.getElementById('f_cost').value = c ? c.costPct : 1;
   document.getElementById('f_referral').value = c ? c.referralPct : 0;
   document.getElementById('f_referralName').value = c ? (c.referralName || '') : '';
   updatePreview();
   document.getElementById('formOverlay').classList.add('show');
+}
+
+/* ----- invoice line items in the case form (case total = their sum) ----- */
+function invRowHTML(no, amount) {
+  return `<div class="inv-row">
+    <input class="inv-no" placeholder="Invoice no." value="${esc(no || '')}">
+    <input class="inv-amt" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Amount (RM)" value="${(amount != null && amount !== '') ? amount : ''}" oninput="recalcInvoices()">
+    <button type="button" class="inv-del" title="Remove" onclick="this.closest('.inv-row').remove(); recalcInvoices()">✕</button>
+  </div>`;
+}
+function renderInvoiceRows(list) {
+  const box = document.getElementById('f_invoices');
+  const rows = (list && list.length) ? list : [{ no: '', amount: '' }];
+  box.innerHTML = rows.map(i => invRowHTML(i.no, i.amount)).join('');
+  recalcInvoices();
+}
+function addInvoiceRow() {
+  document.getElementById('f_invoices').insertAdjacentHTML('beforeend', invRowHTML('', ''));
+  const rows = document.querySelectorAll('#f_invoices .inv-row .inv-no');
+  if (rows.length) rows[rows.length - 1].focus();
+}
+function getInvoicesFromForm() {
+  return [...document.querySelectorAll('#f_invoices .inv-row')].map(r => ({
+    no: r.querySelector('.inv-no').value.trim(),
+    amount: Number(r.querySelector('.inv-amt').value) || 0,
+  })).filter(i => i.no || i.amount);   // drop fully-empty rows
+}
+function recalcInvoices() {
+  const total = getInvoicesFromForm().reduce((s, i) => s + (Number(i.amount) || 0), 0);
+  document.getElementById('f_amount').value = total ? total : '';
+  updatePreview();
+}
+// find another (non-cancelled) case that already uses this invoice number
+function findCaseByInvoiceNo(no, exceptId) {
+  const key = (no || '').trim().toLowerCase();
+  if (!key) return null;
+  return cases.find(c => c.id !== exceptId && !c.cancelledAt && (c.invoices || []).some(i => (i.no || '').trim().toLowerCase() === key)) || null;
 }
 
 function updatePreview() {
@@ -1330,7 +1393,7 @@ async function saveCaseForm() {
   const date = document.getElementById('f_date').value;
   const company = document.getElementById('f_company').value.trim();
   const pic = currentAgent();
-  const amountRaw = document.getElementById('f_amount').value.trim();
+  const invoices = getInvoicesFromForm();
   const sellingRaw = document.getElementById('f_selling').value.trim();
   const costRaw = document.getElementById('f_cost').value.trim();
   const referralRaw = document.getElementById('f_referral').value.trim();
@@ -1339,18 +1402,28 @@ async function saveCaseForm() {
   if (!date) { notify('Please choose the date.', true); return; }
   if (!company) { notify('Please enter the company name.', true); return; }
   if (!pic) { notify('Please select an agent, or use "Add new agent" and type the name.', true); return; }
-  if (amountRaw === '') { notify('Please enter the invoice amount.', true); return; }
+  if (!invoices.length) { notify('Please add at least one invoice (amount required, number optional).', true); return; }
+  if (invoices.some(i => !(Number(i.amount) > 0))) { notify('Every invoice needs an amount above 0.', true); return; }
   if (sellingRaw === '') { notify('Please enter the Selling %.', true); return; }
   if (costRaw === '') { notify('Please enter the Cost %.', true); return; }
   if (referralRaw === '') { notify('Please enter the Referral % (use 0 if none).', true); return; }
 
-  const amount = Number(amountRaw);
+  const amount = invoicesTotal(invoices);
   const sellingPct = Number(sellingRaw);
   const costPct = Number(costRaw);
   const referralPct = Number(referralRaw);
 
   // reasonable values only
-  if (!isFinite(amount) || amount <= 0) { notify('Invoice amount must be a number above 0.', true); return; }
+  if (!isFinite(amount) || amount <= 0) { notify('Total amount must be above 0.', true); return; }
+
+  // warn if any invoice number is already used in another case
+  for (const inv of invoices) {
+    const dup = findCaseByInvoiceNo(inv.no, editingId);
+    if (dup) {
+      if (!confirm(`Invoice no "${inv.no}" already exists in case "${dup.company}".\n\nSave anyway? (To edit the other case, tap Cancel and open it instead.)`)) return;
+      break;
+    }
+  }
   if (!isFinite(sellingPct) || sellingPct <= 0 || sellingPct >= 100) { notify('Selling % must be between 0 and 100.', true); return; }
   if (!isFinite(costPct) || costPct < 0 || costPct >= 100) { notify('Cost % must be between 0 and 100.', true); return; }
   if (!isFinite(referralPct) || referralPct < 0 || referralPct >= 100) { notify('Referral % must be between 0 and 100.', true); return; }
@@ -1359,7 +1432,7 @@ async function saveCaseForm() {
     return;
   }
 
-  const data = { date, company, pic, amount, sellingPct, costPct, referralPct,
+  const data = { date, company, pic, amount, invoices, sellingPct, costPct, referralPct,
     referralName: document.getElementById('f_referralName').value.trim() };
 
   const wasEditing = !!editingId;
@@ -1522,6 +1595,14 @@ function renderDetail() {
       <div class="fig"><div class="label">Referral Fee</div><div class="value">${fmt(x.referralAmount)}</div></div>
       <div class="fig"><div class="label">Profit${x.closed ? ' (actual)' : ' (expected)'}</div><div class="value" style="color:var(--green)">${fmt(x.displayProfit)} (${pct(x.displayPct)})</div></div>
     </div>
+
+    ${(c.invoices && c.invoices.length) ? `<div class="leg" style="margin-bottom:14px">
+      <h3>📄 Invoices (${c.invoices.length})</h3>
+      <table style="margin-top:6px"><tbody>
+        ${c.invoices.map(i => `<tr><td>${esc(i.no) || '<span style="color:var(--muted)">(no number)</span>'}</td><td class="num"><b>${fmt(i.amount)}</b></td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--tan-3)"><td><b>Total</b></td><td class="num"><b>${fmt(invoicesTotal(c.invoices))}</b></td></tr>
+      </tbody></table>
+    </div>` : ''}
 
     ${locked ? (isCanc ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🚫 This case is CANCELLED — view only, not counted in any figures.
       ${saved.cancelledBy || saved.cancelledAt ? `<div style="margin-top:4px;font-weight:500">Cancelled by <b>${esc(userMap[saved.cancelledBy] || '—')}</b>${saved.cancelledAt ? ' · ' + fmtDT(new Date(saved.cancelledAt).getTime()) : ''}</div>` : ''}
@@ -2344,7 +2425,7 @@ function prefillFormFromRec(r) {
   const mk = document.getElementById('f_makeRecurring');
   if (mk) mk.checked = false;
   document.getElementById('f_date').value = r.nextDue || today();
-  document.getElementById('f_amount').value = r.amount || '';
+  renderInvoiceRows(r.amount ? [{ no: '', amount: r.amount }] : []);
   document.getElementById('f_company').value = r.customer || '';
   const sel = document.getElementById('f_pic_select');
   if (sel && [...sel.options].some(o => o.value === r.agent)) { sel.value = r.agent; }

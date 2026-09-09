@@ -449,10 +449,12 @@ const safeName = s => String(s || 'company').replace(/[^a-z0-9]+/gi, '-').replac
 const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
+  invoices: Array.isArray(r.invoices) ? r.invoices : [],
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [] });
 const caseToRow = (c, cid) => ({ company_id: cid, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: c.amount || 0, selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
   referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
+  invoices: Array.isArray(c.invoices) ? c.invoices : [],
   referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
   supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [] });
 
