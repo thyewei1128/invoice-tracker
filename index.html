@@ -362,7 +362,7 @@
     <h2 id="formTitle">New Case</h2>
     <div id="recPickWrap" style="margin-bottom:10px; display:flex; gap:6px; flex-wrap:wrap; align-items:center">
       <button class="btn-secondary btn-small" onclick="togglePickRecurring()">🔁 Fill from Recurring</button>
-      <button class="btn-accent btn-small" onclick="scanInvoice()">📷 Scan Invoice</button>
+      <button class="btn-accent btn-small" onclick="scanInvoice()">📷 Scan / Paste</button>
       <input type="file" id="ocrFile" accept="application/pdf,image/*" multiple style="display:none" onchange="onOcrFile(event)">
       <div id="recPicker" style="display:none;margin-top:8px; width:100%"></div>
     </div>
@@ -405,6 +405,20 @@
     <div class="modal-actions">
       <button class="btn-secondary" onclick="closeOverlay('formOverlay')">Cancel</button>
       <button class="btn-primary" id="formSaveBtn" onclick="saveCaseForm()">Save Case</button>
+    </div>
+  </div>
+</div>
+
+<!-- Scan / Paste invoice input -->
+<div class="overlay" id="scanInputOverlay">
+  <div class="modal" style="max-width:460px">
+    <button class="modal-x" onclick="closeOverlay('scanInputOverlay')">✕</button>
+    <h2>📷 Scan / Paste Invoice</h2>
+    <div style="font-size:13px; color:var(--muted); margin-bottom:8px">Paste the invoice text (e.g. copied from WhatsApp), or upload a PDF / photo. I'll fill the form for you to check before saving.</div>
+    <textarea id="scanText" rows="6" placeholder="Paste invoice text here… (invoice no, amount, client, date)" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:16px; resize:vertical; font-family:inherit"></textarea>
+    <div class="modal-actions" style="justify-content:space-between; margin-top:12px; flex-wrap:wrap; gap:8px">
+      <button class="btn-secondary" onclick="document.getElementById('ocrFile').click()">📎 Upload PDF / Photo</button>
+      <button class="btn-primary" onclick="readPastedText()">Read Text →</button>
     </div>
   </div>
 </div>
@@ -507,7 +521,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.5.0 (09 Sep 2026)';
+const APP_VERSION = '3.6.0 (09 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1494,9 +1508,17 @@ async function ensureOcrLibs() {
 
 function scanInvoice() {
   if (!guardActive()) return;
-  const inp = document.getElementById('ocrFile');
-  inp.value = '';
-  inp.click();
+  document.getElementById('scanText').value = '';
+  document.getElementById('scanInputOverlay').classList.add('show');
+  setTimeout(() => { const t = document.getElementById('scanText'); if (t) t.focus(); }, 50);
+}
+
+// parse pasted text directly (no OCR needed) and fill the form
+function readPastedText() {
+  const t = document.getElementById('scanText').value.trim();
+  if (!t) { notify('Paste some invoice text first, or use Upload.', true); return; }
+  closeOverlay('scanInputOverlay');
+  applyScanResults([parseInvoiceText(t)]);
 }
 
 const scanSet = (t, p) => { document.getElementById('scanMsg').textContent = t; if (p != null) document.getElementById('scanBar').style.width = Math.min(100, p) + '%'; };
@@ -1504,6 +1526,7 @@ const scanSet = (t, p) => { document.getElementById('scanMsg').textContent = t; 
 async function onOcrFile(ev) {
   const files = [...ev.target.files]; ev.target.value = '';
   if (!files.length) return;
+  closeOverlay('scanInputOverlay');
   document.getElementById('scanOverlay').classList.add('show');
   try {
     scanSet('Loading reader (first time only)…', 4);
@@ -1549,6 +1572,11 @@ function parseInvoiceText(text) {
   while ((m = amtRe.exec(joined)) !== null) {
     const v = parseFloat(m[2].replace(/,/g, ''));
     if (isFinite(v) && v > 0) amounts.push({ v, label: m[1].toLowerCase() });
+  }
+  // fallback (e.g. short WhatsApp text with no "Total" label): take the largest RM-prefixed amount
+  if (!amounts.length) {
+    let mm; const rmRe = /(?:rm|myr)\s*([\d,]+(?:\.\d{2})?)/gi;
+    while ((mm = rmRe.exec(joined)) !== null) { const v = parseFloat(mm[1].replace(/,/g, '')); if (isFinite(v) && v > 0) amounts.push({ v, label: 'rm' }); }
   }
   let amount = '';
   const pref = amounts.find(a => /grand|payable|due|nett/.test(a.label));
