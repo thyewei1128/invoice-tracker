@@ -521,7 +521,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.6.3 (09 Sep 2026)';
+const APP_VERSION = '3.7.0 (10 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1518,7 +1518,7 @@ function readPastedText() {
   const t = document.getElementById('scanText').value.trim();
   if (!t) { notify('Paste some invoice text first, or use Upload.', true); return; }
   closeOverlay('scanInputOverlay');
-  applyScanResults([parseInvoiceText(t)]);
+  applyScanResults([extractInvoices(t)]);
 }
 
 const scanSet = (t, p) => { document.getElementById('scanMsg').textContent = t; if (p != null) document.getElementById('scanBar').style.width = Math.min(100, p) + '%'; };
@@ -1544,12 +1544,12 @@ async function onOcrFile(ev) {
           const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
           await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
           const { data } = await Tesseract.recognize(cv, 'eng');
-          results.push(parseInvoiceText(data.text));
+          results.push(extractInvoices(data.text));
         }
       } else {
         scanSet(`Reading image ${fi + 1} of ${files.length}…`, 8 + ((fi + 1) / files.length) * 88);
         const { data } = await Tesseract.recognize(f, 'eng');
-        results.push(parseInvoiceText(data.text));
+        results.push(extractInvoices(data.text));
       }
     }
     document.getElementById('scanOverlay').classList.remove('show');
@@ -1635,30 +1635,66 @@ function normalizeScanDate(s) {
 }
 
 // fill the open New Case form with what was read — user reviews before saving
+// a statement page can list SEVERAL invoices (one per line): pull every invoice-no + amount pair
+function parseInvoiceLineItems(text) {
+  const lines = (text || '').replace(/\r/g, '').split('\n');
+  const items = []; const seen = new Set();
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/\b(sub\s*total|grand\s*total|total|balance|amount\s*due)\b/i.test(line) && !/\binv/i.test(line)) continue; // skip total rows
+    const codeM = line.match(/\b((?:INV|IV|INVOICE|BILL|DOC|TI)[A-Za-z]*[-\/]?\d[\w\/\-]*)\b/i);
+    if (!codeM) continue;
+    const amts = [...line.matchAll(/([\d,]+\.\d{2})/g)].map(m => parseFloat(m[1].replace(/,/g, '')));
+    if (!amts.length) continue;
+    const no = codeM[1].replace(/[.,;:]$/, '');
+    const key = no.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const amount = amts[amts.length - 1];   // rightmost number on the line = the amount column
+    if (amount > 0) items.push({ no, amount });
+  }
+  return items;
+}
+
+// one text block → { invoices:[{no,amount}], company, date }. list of ≥2 = statement; else one invoice.
+function extractInvoices(text) {
+  const single = parseInvoiceText(text);
+  const items = parseInvoiceLineItems(text);
+  let invoices;
+  if (items.length >= 2) invoices = items;
+  else if (single.invoiceNo || single.amount) invoices = [{ no: single.invoiceNo, amount: single.amount }];
+  else invoices = [];
+  return { invoices, company: single.company, date: single.date };
+}
+
 function applyScanResults(results) {
-  const found = results.filter(r => Number(r.amount) > 0 || r.invoiceNo);
-  if (!found.length) { notify('Nothing readable found — please key it in manually.', true); return; }
+  const allInv = []; let company = '', date = '';
+  for (const r of results) {
+    for (const inv of (r.invoices || [])) {
+      if (inv.no || Number(inv.amount) > 0) allInv.push({ no: inv.no || '', amount: Number(inv.amount) || '' });
+    }
+    if (!company && r.company) company = r.company;
+    if (!date && r.date) date = r.date;
+  }
+  if (!allInv.length) { notify('Nothing readable found — please key it in manually.', true); return; }
 
   // "if same invoice number, edit it": offer to open the existing case instead
-  for (const r of found) {
-    const dup = findCaseByInvoiceNo(r.invoiceNo, editingId);
+  for (const inv of allInv) {
+    const dup = findCaseByInvoiceNo(inv.no, editingId);
     if (dup) {
-      if (confirm(`Invoice "${r.invoiceNo}" already exists in case "${dup.company}".\n\nOpen that case to edit it?\n(Cancel = add it here anyway)`)) {
+      if (confirm(`Invoice "${inv.no}" already exists in case "${dup.company}".\n\nOpen that case to edit it?\n(Cancel = add it here anyway)`)) {
         closeOverlay('formOverlay'); openDetail(dup.id); return;
       }
     }
   }
 
-  const first = found.find(r => r.company) || found[0];
   const compEl = document.getElementById('f_company');
-  if (first.company && !compEl.value.trim()) compEl.value = first.company;
-  const firstDate = found.find(r => r.date);
-  if (firstDate) document.getElementById('f_date').value = firstDate.date;
+  if (company && !compEl.value.trim()) compEl.value = company;
+  if (date) document.getElementById('f_date').value = date;
 
-  const existing = getInvoicesFromForm();
-  const merged = [...existing, ...found.map(r => ({ no: r.invoiceNo, amount: Number(r.amount) || '' }))];
-  renderInvoiceRows(merged);
-  notify(`📷 Read ${found.length} invoice${found.length > 1 ? 's' : ''} — please CHECK the numbers & amounts, then set the %.`);
+  renderInvoiceRows([...getInvoicesFromForm(), ...allInv]);
+  notify(`📷 Read ${allInv.length} invoice${allInv.length > 1 ? 's' : ''} — please CHECK the numbers & amounts, then set the %.`);
 }
 
 /* cancel = keep for viewing, excluded from all figures, restorable by the owner; logged in the audit trail */
