@@ -414,8 +414,8 @@
   <div class="modal" style="max-width:460px">
     <button class="modal-x" onclick="closeOverlay('scanInputOverlay')">✕</button>
     <h2>📷 Scan / Paste Invoice</h2>
-    <div style="font-size:13px; color:var(--muted); margin-bottom:8px">Paste the invoice text (e.g. copied from WhatsApp), or upload a PDF / photo. I'll fill the form for you to check before saving.</div>
-    <textarea id="scanText" rows="6" placeholder="Paste invoice text here… (invoice no, amount, client, date)" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:16px; resize:vertical; font-family:inherit"></textarea>
+    <div style="font-size:13px; color:var(--muted); margin-bottom:8px">Paste an invoice <b>image / screenshot / PDF</b> here (copy it, then paste), or paste the invoice <b>text</b> from WhatsApp — or use Upload. I'll fill the form for you to check before saving.</div>
+    <textarea id="scanText" rows="6" onpaste="onScanPaste(event)" placeholder="Paste an invoice image or its text here… (or tap Upload below)" style="width:100%; padding:10px; border:1px solid var(--border); border-radius:8px; font-size:16px; resize:vertical; font-family:inherit"></textarea>
     <div class="modal-actions" style="justify-content:space-between; margin-top:12px; flex-wrap:wrap; gap:8px">
       <button class="btn-secondary" onclick="document.getElementById('ocrFile').click()">📎 Upload PDF / Photo</button>
       <button class="btn-primary" onclick="readPastedText()">Read Text →</button>
@@ -526,7 +526,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.9.0 (20 Sep 2026)';
+const APP_VERSION = '3.9.1 (20 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1528,9 +1528,26 @@ function readPastedText() {
 
 const scanSet = (t, p) => { document.getElementById('scanMsg').textContent = t; if (p != null) document.getElementById('scanBar').style.width = Math.min(100, p) + '%'; };
 
-async function onOcrFile(ev) {
+function onOcrFile(ev) {
   const files = [...ev.target.files]; ev.target.value = '';
-  if (!files.length) return;
+  processScanFiles(files);
+}
+
+// paste handler: if the clipboard holds an image or PDF file, OCR it; otherwise let the text paste
+function onScanPaste(ev) {
+  const dt = ev.clipboardData;
+  if (!dt) return;
+  const files = [];
+  for (const it of (dt.items || [])) {
+    if (it.kind === 'file') { const f = it.getAsFile(); if (f) files.push(f); }
+  }
+  if (!files.length && dt.files && dt.files.length) for (const f of dt.files) files.push(f);
+  const usable = files.filter(f => f && (f.type.startsWith('image/') || f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '')));
+  if (usable.length) { ev.preventDefault(); processScanFiles(usable); }
+}
+
+async function processScanFiles(files) {
+  if (!files || !files.length) return;
   closeOverlay('scanInputOverlay');
   document.getElementById('scanOverlay').classList.add('show');
   try {
