@@ -521,7 +521,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.7.0 (10 Sep 2026)';
+const APP_VERSION = '3.8.0 (20 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1586,6 +1586,11 @@ function parseInvoiceText(text) {
   let invoiceNo = '';
   const im = joined.match(/(?:tax\s*invoice|invoice|inv|document|doc|bill)\s*(?:no|number|#|no\.)\s*[:\-]?\s*([A-Za-z0-9][A-Za-z0-9\/\-]{2,})/i);
   if (im) invoiceNo = im[1].replace(/[.,;:]$/, '');
+  // "INVOICE : CLS26020179" — the word invoice then :/# and a code containing a digit (custom prefixes, no "No")
+  if (!invoiceNo) {
+    const im3 = joined.match(/(?:tax\s*)?invoice\s*[:#\-]\s*([A-Za-z]{0,6}[-\/]?\d[A-Za-z0-9\/\-]{2,})/i);
+    if (im3) invoiceNo = im3[1].replace(/[.,;:]$/, '');
+  }
   if (!invoiceNo) {
     const im2 = joined.match(/\b((?:INV|IV|INVOICE|BILL|DOC|TI)[A-Za-z]*[-\/]?\d[\w\/\-]*)\b/i);
     if (im2) invoiceNo = im2[1].replace(/[.,;:]$/, '');
@@ -1606,19 +1611,30 @@ function parseInvoiceText(text) {
     }
   }
   if (!company) {
-    // find a Malaysian company suffix (Sdn Bhd / Bhd preferred), then walk back to the name start
-    const sm = joined.match(/(sdn\.?\s*bhd|bhd)\b/i) || joined.match(/(enterprise|trading|resources|services|holdings|industries|logistics|marketing)\b/i);
-    if (sm) {
-      const stop = new Set(['for', 'to', 'the', 'a', 'an', 'and', 'need', 'want', 'invoice', 'inv', 'bill', 'please', 'pls', 'send', 'make', 'issue', 'of', 'is', 'this', 'that', 'kindly', 'client', 'customer', 'bro', 'boss', 'bill to', 'sold to']);
-      const pre = joined.slice(0, sm.index).replace(/\s+/g, ' ').trim().split(' ');
-      const name = [];
-      for (let i = pre.length - 1; i >= 0 && name.length < 5; i--) {
-        const w = pre[i].replace(/[,:;.]/g, '');
+    const stop = new Set(['for', 'to', 'the', 'a', 'an', 'and', 'need', 'want', 'invoice', 'inv', 'bill', 'please', 'pls', 'send', 'make', 'issue', 'of', 'is', 'this', 'that', 'kindly', 'client', 'customer', 'bro', 'boss']);
+    // collect the name words that sit just before a company suffix (skip phone/reg numbers & lowercase filler)
+    const walkBack = (idx, suf) => {
+      const pre = joined.slice(0, idx).replace(/\s+/g, ' ').trim().split(' ');
+      const nw = [];
+      for (let i = pre.length - 1; i >= 0 && nw.length < 6; i--) {
+        const w = pre[i].replace(/[,:;.()]/g, '');
         if (!w) continue;
-        if (stop.has(w.toLowerCase())) break;
-        name.unshift(w);
+        if (/\d/.test(w) || /^[a-z]/.test(w) || stop.has(w.toLowerCase())) break;
+        nw.unshift(w);
       }
-      company = (name.join(' ') + ' ' + sm[1]).replace(/\s+/g, ' ').trim();
+      return (nw.join(' ') + ' ' + suf).replace(/\s+/g, ' ').trim();
+    };
+    // strong suffix (Sdn Bhd / Berhad): gather ALL — a letterhead SENDER is usually 1st, the BILL-TO 2nd
+    const names = []; let s; const strongG = /(sdn\.?\s*bhd|berhad|bhd)\b/gi;
+    while ((s = strongG.exec(joined)) !== null) {
+      const nm = walkBack(s.index, s[1]);
+      if (nm.length > 3 && !names.some(x => x.toLowerCase() === nm.toLowerCase())) names.push(nm);
+    }
+    if (names.length >= 2) company = names[1];
+    else if (names.length === 1) company = names[0];
+    else {
+      const w = joined.match(/(enterprise|trading|resources|services|holdings|industries|logistics|marketing)\b/i);
+      if (w) company = walkBack(w.index, w[1]);
     }
   }
   return { invoiceNo, amount, company, date };
@@ -1669,14 +1685,25 @@ function extractInvoices(text) {
 }
 
 function applyScanResults(results) {
-  const allInv = []; let company = '', date = '';
+  const raw = []; let company = '', date = '';
   for (const r of results) {
     for (const inv of (r.invoices || [])) {
-      if (inv.no || Number(inv.amount) > 0) allInv.push({ no: inv.no || '', amount: Number(inv.amount) || '' });
+      if (inv.no || Number(inv.amount) > 0) raw.push({ no: inv.no || '', amount: Number(inv.amount) || '' });
     }
     if (!company && r.company) company = r.company;
     if (!date && r.date) date = r.date;
   }
+  // one invoice can span many pages: merge same invoice-no, keeping the biggest amount (its grand total).
+  // different invoice numbers stay as separate lines (several invoices for the same customer in one PDF).
+  const byNo = new Map(); const noNumber = [];
+  for (const inv of raw) {
+    const key = (inv.no || '').trim().toLowerCase();
+    if (!key) { noNumber.push(inv); continue; }
+    const amt = Number(inv.amount) || 0;
+    const cur = byNo.get(key);
+    if (!cur || amt > (Number(cur.amount) || 0)) byNo.set(key, { no: inv.no, amount: inv.amount });
+  }
+  const allInv = [...byNo.values(), ...noNumber];
   if (!allInv.length) { notify('Nothing readable found — please key it in manually.', true); return; }
 
   // "if same invoice number, edit it": offer to open the existing case instead
