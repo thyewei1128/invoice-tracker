@@ -526,7 +526,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.9.1 (20 Sep 2026)';
+const APP_VERSION = '3.9.2 (21 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1400,10 +1400,14 @@ function recalcInvoices() {
   updatePreview();
 }
 // find another (non-cancelled) case that already uses this invoice number
+// normalise an invoice number for MATCHING only (display keeps the original):
+// upper-case, drop spaces, and fold the classic OCR look-alikes O→0, I/L→1 so a
+// mis-read "CLS2603O144" still matches the stored "CLS26030144".
+const normInvNo = s => (s || '').toUpperCase().replace(/\s+/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
 function findCaseByInvoiceNo(no, exceptId) {
-  const key = (no || '').trim().toLowerCase();
+  const key = normInvNo(no);
   if (!key) return null;
-  return cases.find(c => c.id !== exceptId && !c.cancelledAt && (c.invoices || []).some(i => (i.no || '').trim().toLowerCase() === key)) || null;
+  return cases.find(c => c.id !== exceptId && !c.cancelledAt && (c.invoices || []).some(i => normInvNo(i.no) === key)) || null;
 }
 
 function updatePreview() {
@@ -1720,7 +1724,7 @@ function applyScanResults(results) {
   // different invoice numbers stay as separate lines (several invoices for the same customer in one PDF).
   const byNo = new Map(); const noNumber = [];
   for (const inv of raw) {
-    const key = (inv.no || '').trim().toLowerCase();
+    const key = normInvNo(inv.no);
     if (!key) { noNumber.push(inv); continue; }
     const amt = Number(inv.amount) || 0;
     const cur = byNo.get(key);
@@ -1734,8 +1738,8 @@ function applyScanResults(results) {
   for (const inv of allInv) {
     const c = inv.no ? findCaseByInvoiceNo(inv.no, editingId) : null;
     if (c) {
-      const ex = (c.invoices || []).find(i => (i.no || '').trim().toLowerCase() === inv.no.trim().toLowerCase());
-      dups.push({ no: inv.no, scanned: Number(inv.amount) || 0, current: Number(ex ? ex.amount : 0) || 0, caseId: c.id, caseName: c.company });
+      const ex = (c.invoices || []).find(i => normInvNo(i.no) === normInvNo(inv.no));
+      dups.push({ no: (ex && ex.no) || inv.no, scanned: Number(inv.amount) || 0, current: Number(ex ? ex.amount : 0) || 0, caseId: c.id, caseName: c.company });
     } else news.push(inv);
   }
   pendingScan = { news, company, date, dups };
@@ -1767,13 +1771,16 @@ function showDupReview(dups) {
       </div>
     </label>`;
   }).join('');
-  const news = (pendingScan.news || []).length;
+  const news = pendingScan.news || [];
   document.getElementById('dupModal').innerHTML = `
     <button class="modal-x" onclick="finishDupReview(false)">✕</button>
     <h2>⚠️ Already in your records</h2>
     <div style="font-size:13px;color:var(--muted);margin-bottom:8px">These invoice numbers already exist. Tick the ones to UPDATE to the newly-read amount; untick to keep them unchanged. Nothing changes until you tap Apply.</div>
     <div>${rows}</div>
-    ${news ? `<div style="font-size:13px;color:var(--muted);margin-top:10px">Plus ${news} new invoice${news > 1 ? 's' : ''} will be added to this form.</div>` : ''}
+    ${news.length ? `<div class="leg" style="margin-top:12px; background:var(--green-soft); border-color:#BBDCC8">
+      <div style="font-size:13px;font-weight:700;color:var(--green)">➕ New invoice${news.length > 1 ? 's' : ''} to add to this case (${news.length})</div>
+      ${news.map(n => `<div style="font-size:13px;padding:3px 0;display:flex;justify-content:space-between;gap:10px"><span>📄 ${esc(n.no) || '<span style="color:var(--muted)">(no number)</span>'}</span><b>${fmt(n.amount)}</b></div>`).join('')}
+    </div>` : ''}
     <div class="modal-actions">
       <button class="btn-secondary" onclick="finishDupReview(false)">Skip updates</button>
       <button class="btn-primary" onclick="finishDupReview(true)">Apply ticked updates</button>
@@ -1802,7 +1809,7 @@ async function updateInvoiceInCase(caseId, no, newAmount) {
   if (!c) return false;
   if (c.cancelledAt) { notify(`"${c.company}" is cancelled — can't update.`, true); return false; }
   if (computed(c).closed && !isUnlocked(caseId)) { notify(`🔒 "${c.company}" is closed & locked — open it and unlock to update ${no}.`, true); return false; }
-  const invs = (c.invoices || []).map(i => (i.no || '').trim().toLowerCase() === no.trim().toLowerCase() ? { ...i, amount: newAmount } : i);
+  const invs = (c.invoices || []).map(i => normInvNo(i.no) === normInvNo(no) ? { ...i, amount: newAmount } : i);
   try { await api(`/rest/v1/cases?id=eq.${caseId}`, { method: 'PATCH', body: JSON.stringify(caseToRow({ ...c, invoices: invs })) }); }
   catch (e) { saveFail(e); return false; }
   c.invoices = invs; c.amount = invoicesTotal(invs);
