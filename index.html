@@ -423,6 +423,11 @@
   </div>
 </div>
 
+<!-- Duplicate-invoice review (asks before updating anything you already submitted) -->
+<div class="overlay" id="dupOverlay">
+  <div class="modal" id="dupModal" style="max-width:460px"></div>
+</div>
+
 <!-- OCR scan progress -->
 <div class="overlay" id="scanOverlay">
   <div class="modal" style="max-width:340px; text-align:center">
@@ -521,7 +526,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.8.0 (20 Sep 2026)';
+const APP_VERSION = '3.9.0 (20 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1684,6 +1689,7 @@ function extractInvoices(text) {
   return { invoices, company: single.company, date: single.date };
 }
 
+let pendingScan = null;
 function applyScanResults(results) {
   const raw = []; let company = '', date = '';
   for (const r of results) {
@@ -1706,22 +1712,85 @@ function applyScanResults(results) {
   const allInv = [...byNo.values(), ...noNumber];
   if (!allInv.length) { notify('Nothing readable found — please key it in manually.', true); return; }
 
-  // "if same invoice number, edit it": offer to open the existing case instead
+  // split into NEW (add to form) and DUPLICATES (already submitted — never auto-update; ask first)
+  const dups = [], news = [];
   for (const inv of allInv) {
-    const dup = findCaseByInvoiceNo(inv.no, editingId);
-    if (dup) {
-      if (confirm(`Invoice "${inv.no}" already exists in case "${dup.company}".\n\nOpen that case to edit it?\n(Cancel = add it here anyway)`)) {
-        closeOverlay('formOverlay'); openDetail(dup.id); return;
-      }
+    const c = inv.no ? findCaseByInvoiceNo(inv.no, editingId) : null;
+    if (c) {
+      const ex = (c.invoices || []).find(i => (i.no || '').trim().toLowerCase() === inv.no.trim().toLowerCase());
+      dups.push({ no: inv.no, scanned: Number(inv.amount) || 0, current: Number(ex ? ex.amount : 0) || 0, caseId: c.id, caseName: c.company });
+    } else news.push(inv);
+  }
+  pendingScan = { news, company, date, dups };
+  if (dups.length) showDupReview(dups);
+  else applyScanNews();
+}
+
+// add only the NEW invoices to the open form; existing ones are handled in the review
+function applyScanNews() {
+  const { news, company, date } = pendingScan || { news: [], company: '', date: '' };
+  const compEl = document.getElementById('f_company');
+  if (company && compEl && !compEl.value.trim()) compEl.value = company;
+  if (date && document.getElementById('f_date')) document.getElementById('f_date').value = date;
+  if (news.length) renderInvoiceRows([...getInvoicesFromForm(), ...news]);
+  notify(news.length
+    ? `📷 Added ${news.length} new invoice${news.length > 1 ? 's' : ''} — please CHECK, then set the %.`
+    : 'No new invoices to add. You can close this form.');
+}
+
+// show the duplicates with current → scanned amounts; user ticks which to update
+function showDupReview(dups) {
+  const rows = dups.map((d, i) => {
+    const changed = Math.abs(d.scanned - d.current) > 0.005;
+    return `<label style="display:flex; gap:10px; align-items:flex-start; padding:9px 0; border-bottom:1px solid var(--border)">
+      <input type="checkbox" id="dupchk_${i}" ${changed ? 'checked' : ''} style="width:18px;height:18px;margin-top:2px;flex:none;accent-color:var(--accent)">
+      <div style="min-width:0">
+        <div><b>📄 ${esc(d.no)}</b> — in case <b>${esc(d.caseName)}</b></div>
+        <div style="font-size:13px;margin-top:2px">Current <b>${fmt(d.current)}</b> → Read <b style="color:${changed ? 'var(--red)' : 'var(--green)'}">${fmt(d.scanned)}</b>${changed ? '' : ' <span style="color:var(--muted)">(same)</span>'}</div>
+      </div>
+    </label>`;
+  }).join('');
+  const news = (pendingScan.news || []).length;
+  document.getElementById('dupModal').innerHTML = `
+    <button class="modal-x" onclick="finishDupReview(false)">✕</button>
+    <h2>⚠️ Already in your records</h2>
+    <div style="font-size:13px;color:var(--muted);margin-bottom:8px">These invoice numbers already exist. Tick the ones to UPDATE to the newly-read amount; untick to keep them unchanged. Nothing changes until you tap Apply.</div>
+    <div>${rows}</div>
+    ${news ? `<div style="font-size:13px;color:var(--muted);margin-top:10px">Plus ${news} new invoice${news > 1 ? 's' : ''} will be added to this form.</div>` : ''}
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="finishDupReview(false)">Skip updates</button>
+      <button class="btn-primary" onclick="finishDupReview(true)">Apply ticked updates</button>
+    </div>`;
+  document.getElementById('dupOverlay').classList.add('show');
+}
+
+async function finishDupReview(apply) {
+  const dups = (pendingScan && pendingScan.dups) || [];
+  let updated = 0;
+  if (apply) {
+    for (let i = 0; i < dups.length; i++) {
+      const chk = document.getElementById('dupchk_' + i);
+      if (chk && chk.checked && await updateInvoiceInCase(dups[i].caseId, dups[i].no, dups[i].scanned)) updated++;
     }
   }
+  closeOverlay('dupOverlay');
+  applyScanNews();
+  if (updated) notify(`✓ Updated ${updated} existing invoice${updated > 1 ? 's' : ''}.`);
+}
 
-  const compEl = document.getElementById('f_company');
-  if (company && !compEl.value.trim()) compEl.value = company;
-  if (date) document.getElementById('f_date').value = date;
-
-  renderInvoiceRows([...getInvoicesFromForm(), ...allInv]);
-  notify(`📷 Read ${allInv.length} invoice${allInv.length > 1 ? 's' : ''} — please CHECK the numbers & amounts, then set the %.`);
+// change one invoice's amount inside an existing case and re-save (respects lock/cancel/suspension)
+async function updateInvoiceInCase(caseId, no, newAmount) {
+  if (!guardActive()) return false;
+  const c = cases.find(x => x.id === caseId);
+  if (!c) return false;
+  if (c.cancelledAt) { notify(`"${c.company}" is cancelled — can't update.`, true); return false; }
+  if (computed(c).closed && !isUnlocked(caseId)) { notify(`🔒 "${c.company}" is closed & locked — open it and unlock to update ${no}.`, true); return false; }
+  const invs = (c.invoices || []).map(i => (i.no || '').trim().toLowerCase() === no.trim().toLowerCase() ? { ...i, amount: newAmount } : i);
+  try { await api(`/rest/v1/cases?id=eq.${caseId}`, { method: 'PATCH', body: JSON.stringify(caseToRow({ ...c, invoices: invs })) }); }
+  catch (e) { saveFail(e); return false; }
+  c.invoices = invs; c.amount = invoicesTotal(invs);
+  render();
+  return true;
 }
 
 /* cancel = keep for viewing, excluded from all figures, restorable by the owner; logged in the audit trail */
@@ -2252,7 +2321,7 @@ function showInfo(key) {
 
 /* ---------- misc ---------- */
 function closeOverlay(id) { document.getElementById(id).classList.remove('show'); }
-const PROTECTED_OVERLAYS = ['loginOverlay', 'resetOverlay', 'seatOverlay', 'scanOverlay'];   // cannot be dismissed
+const PROTECTED_OVERLAYS = ['loginOverlay', 'resetOverlay', 'seatOverlay', 'scanOverlay', 'dupOverlay'];   // cannot be dismissed
 function closeAllOverlays() {
   document.querySelectorAll('.overlay.show').forEach(o => {
     if (PROTECTED_OVERLAYS.includes(o.id)) return;
