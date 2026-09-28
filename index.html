@@ -526,7 +526,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.9.3 (28 Sep 2026)';
+const APP_VERSION = '3.9.4 (29 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1653,7 +1653,8 @@ function parseInvoiceText(text) {
     };
     // strong suffix (Sdn Bhd / Berhad): gather ALL — a letterhead SENDER is usually 1st, the BILL-TO 2nd
     // OCR-tolerant suffix: scans often read SDN as SON/S0N and BHD as BHO — accept those too
-    const names = []; let s; const strongG = /(s[do0]n\.?\s*bh[do0]|berhad|bhd)\b/gi;
+    // leading \b stops it matching inside an email like "gqslogisticssdnbhd@gmail.com"
+    const names = []; let s; const strongG = /\b(s[do0]n\.?\s*bh[do0]|berhad|bhd)\b/gi;
     while ((s = strongG.exec(joined)) !== null) {
       const nm = walkBack(s.index, s[1]);
       if (nm.length > 3 && !names.some(x => x.toLowerCase() === nm.toLowerCase())) names.push(nm);
