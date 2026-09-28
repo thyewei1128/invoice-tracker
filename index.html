@@ -526,7 +526,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.9.2 (21 Sep 2026)';
+const APP_VERSION = '3.9.3 (28 Sep 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1593,7 +1593,8 @@ function parseInvoiceText(text) {
   const lines = joined.split('\n').map(l => l.trim()).filter(Boolean);
 
   // amount: prefer clearly-labelled payable/grand totals, else the largest labelled total
-  const amtRe = /(grand\s*total|total\s*payable|amount\s*(?:due|payable)|balance\s*due|nett?\s*total|total\s*amount|total)\s*[:\-]?\s*(?:rm|myr)?\s*([\d,]+(?:\.\d{2})?)/gi;
+  // currency may be bare "RM", bracketed "(RM)" (GQS format), or absent; optional colon after it
+  const amtRe = /(grand\s*total|total\s*payable|amount\s*(?:due|payable)|balance\s*due|nett?\s*total|total\s*amount|total)\s*[:\-]?\s*(?:\(?\s*(?:rm|myr)\s*\)?)?\s*:?\s*([\d,]+(?:\.\d{2})?)/gi;
   const amounts = []; let m;
   while ((m = amtRe.exec(joined)) !== null) {
     const v = parseFloat(m[2].replace(/,/g, ''));
@@ -1601,7 +1602,7 @@ function parseInvoiceText(text) {
   }
   // fallback (e.g. short WhatsApp text with no "Total" label): take the largest RM-prefixed amount
   if (!amounts.length) {
-    let mm; const rmRe = /(?:rm|myr)\s*([\d,]+(?:\.\d{2})?)/gi;
+    let mm; const rmRe = /\(?\s*(?:rm|myr)\s*\)?\s*([\d,]+(?:\.\d{2})?)/gi;
     while ((mm = rmRe.exec(joined)) !== null) { const v = parseFloat(mm[1].replace(/,/g, '')); if (isFinite(v) && v > 0) amounts.push({ v, label: 'rm' }); }
   }
   let amount = '';
@@ -1643,7 +1644,7 @@ function parseInvoiceText(text) {
       const pre = joined.slice(0, idx).replace(/\s+/g, ' ').trim().split(' ');
       const nw = [];
       for (let i = pre.length - 1; i >= 0 && nw.length < 6; i--) {
-        const w = pre[i].replace(/[,:;.()]/g, '');
+        const w = pre[i].replace(/[,:;.]/g, '');   // keep "(M)" so "CTF LOGISTICS (M) SDN BHD" stays intact
         if (!w) continue;
         if (/\d/.test(w) || /^[a-z]/.test(w) || stop.has(w.toLowerCase())) break;
         nw.unshift(w);
@@ -1651,7 +1652,8 @@ function parseInvoiceText(text) {
       return (nw.join(' ') + ' ' + suf).replace(/\s+/g, ' ').trim();
     };
     // strong suffix (Sdn Bhd / Berhad): gather ALL — a letterhead SENDER is usually 1st, the BILL-TO 2nd
-    const names = []; let s; const strongG = /(sdn\.?\s*bhd|berhad|bhd)\b/gi;
+    // OCR-tolerant suffix: scans often read SDN as SON/S0N and BHD as BHO — accept those too
+    const names = []; let s; const strongG = /(s[do0]n\.?\s*bh[do0]|berhad|bhd)\b/gi;
     while ((s = strongG.exec(joined)) !== null) {
       const nm = walkBack(s.index, s[1]);
       if (nm.length > 3 && !names.some(x => x.toLowerCase() === nm.toLowerCase())) names.push(nm);
