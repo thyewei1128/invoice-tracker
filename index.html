@@ -534,7 +534,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.0.0 (14 Oct 2026)';
+const APP_VERSION = '4.1.0 (14 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -2009,6 +2009,13 @@ function renderDetail() {
         <input type="text" class="note" id="d_${listKey}_note" placeholder="Note (optional)">
         <button class="btn-primary btn-small" onclick="addTxn('${listKey}')">Add Payment</button>
         ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
+        ${(listKey === 'supplierPayments' || listKey === 'clientPayouts') ? (() => {
+          // suggest the amount that matches what the CUSTOMER has paid so far: paid × (1 − cost%) for the
+          // supplier, paid × (1 − selling%) for the client payout — minus what this leg already has.
+          const rate = listKey === 'supplierPayments' ? 1 - (Number(c.costPct) || 0) / 100 : 1 - (Number(c.sellingPct) || 0) / 100;
+          const sug = Math.min(x.recvCustomer * rate - got, target - got);
+          return sug > TOL ? `<button class="btn-accent btn-small" onclick="suggestTxn('${listKey}',${sug.toFixed(2)})" title="Matches the customer's payments so far">Match customer paid · ${fmt(sug)}</button>` : '';
+        })() : ''}
       </div>`}
     </div>`;
 
@@ -2352,6 +2359,15 @@ function draftList(listKey) {
   const arr = (detailDraft[root] = detailDraft[root] || []);
   const o = (arr[idx] = arr[idx] || {});
   return (o[sub] = o[sub] || []);
+}
+
+// "Match customer paid": pre-fill the leg's amount box with the suggestion — you still review, then tap Add Payment
+function suggestTxn(listKey, amt) {
+  const el = document.getElementById(`d_${listKey}_amount`);
+  if (!el) return;
+  el.value = Number(amt).toFixed(2);
+  el.focus();
+  notify(`Suggested ${fmt(amt)} — check it, then tap Add Payment.`);
 }
 
 function addTxn(listKey, presetAmount) {
