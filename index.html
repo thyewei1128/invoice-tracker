@@ -180,6 +180,8 @@
   .leg.leg-customer h3 { color: var(--blue); }
   .leg.leg-supplier h3 { color: var(--green); }
   .leg.leg-payout h3 { color: var(--tan-3); }
+  .leg.leg-referral { background: #F6F0FA; border-color: #D9C8E6; border-left: 5px solid #7A5A96; }
+  .leg.leg-referral h3 { color: #7A5A96; }
   .txn-form { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
   .txn-form input { padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 13px; }
   .txn-form input.amt { width: 130px; }
@@ -381,8 +383,14 @@
       </div>
       <div class="field"><label>Selling %</label><input type="number" id="f_selling" step="0.01" min="0" oninput="updatePreview()"></div>
       <div class="field"><label>Cost %</label><input type="number" id="f_cost" step="0.01" min="0" value="1" oninput="updatePreview()"></div>
-      <div class="field"><label>Referral %</label><input type="number" id="f_referral" step="0.01" min="0" value="0" oninput="updatePreview()"></div>
-      <div class="field"><label>Referral Name (optional)</label><input type="text" id="f_referralName"></div>
+      <div class="field full">
+        <label>Referral <span style="color:var(--muted); font-weight:400">— up to 2 · name + % (leave empty if none)</span></label>
+        <div id="f_referrals"></div>
+        <button type="button" class="btn-secondary btn-small" id="f_addRef" style="margin-top:6px" onclick="addReferralRow()">➕ Add Referral</button>
+        <!-- hidden totals: sum of % and joined names — the preview/validation read these -->
+        <input type="hidden" id="f_referral" value="0">
+        <input type="hidden" id="f_referralName" value="">
+      </div>
     </div>
     <div class="calc-preview" id="calcPreview"></div>
     <div id="recCreateWrap" style="margin-top:12px">
@@ -526,7 +534,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '3.9.4 (29 Sep 2026)';
+const APP_VERSION = '4.0.0 (14 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -580,23 +588,40 @@ async function api(path, opts = {}, retry = true) {
 }
 
 // app object <-> database row
-const rowToCase = r => ({ id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
-  sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: +r.referral_pct, referralName: r.referral_name || '',
+// referrals: up to 2 of { name, pct, payments:[{id,date,amount,note}] } — partial payments allowed.
+// Built from the referrals column, or converted from the legacy single-referral fields
+// (legacy "paid" becomes one full payment so existing cases keep the same cash & close status).
+const refPctTotal = list => (Array.isArray(list) ? list : []).reduce((s, x) => s + (Number(x.pct) || 0), 0);
+const referralsFromRow = r => {
+  if (Array.isArray(r.referrals) && r.referrals.length)
+    return r.referrals.map(x => ({ name: x.name || '', pct: Number(x.pct) || 0, payments: Array.isArray(x.payments) ? x.payments : [] }));
+  const pct = Number(r.referral_pct) || 0;
+  if (!(pct > 0) && !r.referral_name) return [];
+  const fee = (Number(r.amount) || 0) * pct / 100;
+  return [{ name: r.referral_name || '', pct,
+    payments: (r.referral_paid && fee > 0) ? [{ id: uid(), date: r.referral_paid_date || r.case_date || today(), amount: fee, note: '' }] : [] }];
+};
+const rowToCase = r => { const refs = referralsFromRow(r); return { id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
+  sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: refPctTotal(refs), referralName: refs.map(x => x.name).filter(Boolean).join(' + '), referrals: refs,
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
   forceClosed: !!r.force_closed, recurringId: r.recurring_id || null,
   invoices: Array.isArray(r.invoices) ? r.invoices : [],
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
   createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
-  cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null });
+  cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null }; };
 // when invoices exist, the case total (amount) is always their sum
 const invoicesTotal = list => (Array.isArray(list) ? list : []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
 const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
   amount: (Array.isArray(c.invoices) && c.invoices.length) ? invoicesTotal(c.invoices) : (c.amount || 0),
   invoices: Array.isArray(c.invoices) ? c.invoices : [],
-  selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0, referral_pct: c.referralPct || 0,
-  referral_name: c.referralName || '', invoice_issued: !!c.invoiceIssued, referral_paid: !!c.referralPaid,
+  selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0,
+  // referrals array is the source of truth; legacy columns are derived from it (admin CSV / old backups)
+  referrals: Array.isArray(c.referrals) ? c.referrals : [],
+  referral_pct: (c.referrals && c.referrals.length) ? refPctTotal(c.referrals) : (c.referralPct || 0),
+  referral_name: (c.referrals && c.referrals.length) ? c.referrals.map(x => x.name).filter(Boolean).join(' + ') : (c.referralName || ''),
+  invoice_issued: !!c.invoiceIssued, referral_paid: referralsDone(c),
   force_closed: !!c.forceClosed, recurring_id: c.recurringId || null,
-  referral_paid_date: c.referralPaidDate || null, customer_payments: c.customerPayments || [],
+  referral_paid_date: lastRefPayDate(c) || c.referralPaidDate || null, customer_payments: c.customerPayments || [],
   supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [],
   updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
 const rowToAdj = r => ({ id: r.id, date: r.adj_date, type: r.type, amount: +r.amount, note: r.note || '', isExpense: !!r.is_expense });
@@ -953,13 +978,22 @@ function filterByStatus(s) {
   if (tw) tw.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
+// shared leg status rule (also used for each referral leg in the detail view)
+const legStatusOf = (got, target) => target <= TOL ? 'full' : got >= target - TOL ? 'full' : got > TOL ? 'partial' : 'none';
+// referral helpers — total % across both referrals, and what has actually been paid out so far
+const caseRefPct = c => (c.referrals && c.referrals.length) ? refPctTotal(c.referrals) : (Number(c.referralPct) || 0);
+function refPaidTotal(c) { return (c.referrals || []).reduce((s, r) => s + sum(r.payments || []), 0); }
+function referralsDone(c) { const fee = (Number(c.amount) || 0) * caseRefPct(c) / 100; return fee <= TOL || refPaidTotal(c) >= fee - TOL; }
+function lastRefPayDate(c) { let d = ''; for (const r of c.referrals || []) for (const p of r.payments || []) if ((p.date || '') > d) d = p.date; return d || null; }
+
 function computed(c) {
   const amount = Number(c.amount) || 0;
   const expectedCustomer = amount;                                  // client pays invoice amount
   const expectedSupplier = amount * (1 - (Number(c.costPct) || 0) / 100);   // cash back from supplier
   const expectedPayout   = amount * (1 - (Number(c.sellingPct) || 0) / 100); // cash passed to client
-  const referralAmount   = amount * (Number(c.referralPct) || 0) / 100;
-  const profitPct = (Number(c.sellingPct) || 0) - (Number(c.costPct) || 0) - (Number(c.referralPct) || 0);
+  const refPct = caseRefPct(c);                                     // sum of up to 2 referrals
+  const referralAmount   = amount * refPct / 100;
+  const profitPct = (Number(c.sellingPct) || 0) - (Number(c.costPct) || 0) - refPct;
   const profitAmount = amount * profitPct / 100;
 
   const recvCustomer = sum(c.customerPayments);
@@ -971,7 +1005,10 @@ function computed(c) {
   const sCustomer = legStatus(recvCustomer, expectedCustomer);
   const sSupplier = legStatus(recvSupplier, expectedSupplier);
   const sPayout   = legStatus(paidClient, expectedPayout);
-  const referralDone = referralAmount <= TOL || !!c.referralPaid;
+  // referral: partial payments allowed; done only when every referral's fee is fully paid
+  const referralPaidAmt = refPaidTotal(c);
+  const referralDone = referralAmount <= TOL || referralPaidAmt >= referralAmount - TOL;
+  const sReferral = legStatus(referralPaidAmt, referralAmount);
 
   // A case is Closed when every leg is truly fulfilled, OR a human has manually force-closed it.
   const fullyPaid = !!c.invoiceIssued && sCustomer === 'full' && sSupplier === 'full' && sPayout === 'full' && referralDone;
@@ -983,10 +1020,10 @@ function computed(c) {
   const displayProfit = closed ? actualProfit : profitAmount;
   const displayPct = closed ? (amount > 0 ? actualProfit / amount * 100 : 0) : profitPct;
 
-  return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount,
+  return { amount, expectedCustomer, expectedSupplier, expectedPayout, referralAmount, referralPaidAmt,
            profitPct, profitAmount, actualProfit, displayProfit, displayPct,
            recvCustomer, recvSupplier, paidClient,
-           sCustomer, sSupplier, sPayout, referralDone, closed };
+           sCustomer, sSupplier, sPayout, sReferral, referralDone, closed };
 }
 
 /* ---------- cash ---------- */
@@ -999,7 +1036,9 @@ function cashMovements() {
     const x = computed(c);
     for (const t of c.supplierPayments || []) moves.push({ date: t.date, amount: +t.amount, label: `Cash in from supplier — ${c.company}`, note: t.note || '' });
     for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
-    if (c.referralPaid && x.referralAmount > TOL) moves.push({ date: c.referralPaidDate || c.date, amount: -x.referralAmount, label: `Referral fee — ${c.company}${c.referralName ? ' (' + c.referralName + ')' : ''}`, note: '' });
+    // each referral payment (partial or full) is its own dated cash-out
+    for (const r of c.referrals || []) for (const t of r.payments || [])
+      moves.push({ date: t.date, amount: -(Number(t.amount) || 0), label: `Referral fee — ${c.company}${r.name ? ' (' + r.name + ')' : ''}`, note: t.note || '' });
   }
   for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.isExpense ? '💸 Expense' : (a.type === 'in' ? 'Cash in' : 'Cash out'), note: a.note || '', adjId: a.id });
   for (const w of withdrawals) moves.push({ date: w.date, amount: -(Number(w.amount) || 0), label: `Profit withdrawal — ${w.partner}`, note: w.note || '' });
@@ -1326,7 +1365,7 @@ function agentSelectChanged() {
   if (!d) return;
   document.getElementById('f_selling').value = d.sellingPct;
   document.getElementById('f_cost').value = d.costPct;
-  document.getElementById('f_referral').value = d.referralPct;
+  renderReferralRows((Number(d.referralPct) || 0) > 0 ? [{ name: '', pct: d.referralPct }] : []);
   updatePreview();
 }
 
@@ -1363,8 +1402,7 @@ function openCaseForm(id) {
   renderInvoiceRows(c ? ((c.invoices && c.invoices.length) ? c.invoices : (c.amount ? [{ no: '', amount: c.amount }] : [])) : []);
   document.getElementById('f_selling').value = c ? c.sellingPct : '';
   document.getElementById('f_cost').value = c ? c.costPct : 1;
-  document.getElementById('f_referral').value = c ? c.referralPct : 0;
-  document.getElementById('f_referralName').value = c ? (c.referralName || '') : '';
+  renderReferralRows(c ? (c.referrals || []).map(r => ({ name: r.name, pct: r.pct })) : []);
   updatePreview();
   document.getElementById('formOverlay').classList.add('show');
 }
@@ -1400,6 +1438,42 @@ function recalcInvoices() {
   updatePreview();
 }
 // find another (non-cancelled) case that already uses this invoice number
+/* ----- referral rows in the case form (up to 2: name + %) ----- */
+const MAX_REFERRALS = 2;
+function refRowHTML(name, pctVal) {
+  return `<div class="inv-row ref-row">
+    <input class="inv-no ref-name" placeholder="Referral name" value="${esc(name || '')}">
+    <input class="inv-amt ref-pct" type="number" step="0.01" min="0" inputmode="decimal" placeholder="%" value="${(pctVal != null && pctVal !== '') ? pctVal : ''}" oninput="recalcReferrals()">
+    <button type="button" class="inv-del" title="Remove" onclick="this.closest('.ref-row').remove(); recalcReferrals()">✕</button>
+  </div>`;
+}
+function renderReferralRows(list) {
+  document.getElementById('f_referrals').innerHTML = (list || []).map(r => refRowHTML(r.name, r.pct)).join('');
+  recalcReferrals();
+}
+function addReferralRow() {
+  if (document.querySelectorAll('#f_referrals .ref-row').length >= MAX_REFERRALS) return;
+  document.getElementById('f_referrals').insertAdjacentHTML('beforeend', refRowHTML('', ''));
+  recalcReferrals();
+  const names = document.querySelectorAll('#f_referrals .ref-name');
+  if (names.length) names[names.length - 1].focus();
+}
+function getReferralsFromForm() {
+  return [...document.querySelectorAll('#f_referrals .ref-row')].map(r => ({
+    name: r.querySelector('.ref-name').value.trim(),
+    pct: Number(r.querySelector('.ref-pct').value) || 0,
+  })).filter(r => r.name || r.pct > 0);   // drop fully-empty rows
+}
+// keep the hidden sum/name fields (read by the preview & validation) in step with the rows
+function recalcReferrals() {
+  const rows = getReferralsFromForm();
+  document.getElementById('f_referral').value = rows.reduce((s, r) => s + r.pct, 0);
+  document.getElementById('f_referralName').value = rows.map(r => r.name).filter(Boolean).join(' + ');
+  const btn = document.getElementById('f_addRef');
+  if (btn) btn.style.display = document.querySelectorAll('#f_referrals .ref-row').length >= MAX_REFERRALS ? 'none' : '';
+  updatePreview();
+}
+
 // normalise an invoice number for MATCHING only (display keeps the original):
 // upper-case, drop spaces, and fold the classic OCR look-alikes O→0, I/L→1 so a
 // mis-read "CLS2603O144" still matches the stored "CLS26030144".
@@ -1441,12 +1515,15 @@ async function saveCaseForm() {
   if (invoices.some(i => !(Number(i.amount) > 0))) { notify('Every invoice needs an amount above 0.', true); return; }
   if (sellingRaw === '') { notify('Please enter the Selling %.', true); return; }
   if (costRaw === '') { notify('Please enter the Cost %.', true); return; }
-  if (referralRaw === '') { notify('Please enter the Referral % (use 0 if none).', true); return; }
+  // referral rows (up to 2): each % must be sensible; the hidden f_referral holds their sum
+  const refRows = getReferralsFromForm();
+  if (refRows.some(r => !isFinite(r.pct) || r.pct < 0 || r.pct >= 100)) { notify('Each Referral % must be between 0 and 100.', true); return; }
+  if (refRows.some(r => r.name && !(r.pct > 0))) { notify('A referral with a name needs a % above 0 (or remove the row).', true); return; }
 
   const amount = invoicesTotal(invoices);
   const sellingPct = Number(sellingRaw);
   const costPct = Number(costRaw);
-  const referralPct = Number(referralRaw);
+  const referralPct = Number(referralRaw) || 0;
 
   // reasonable values only
   if (!isFinite(amount) || amount <= 0) { notify('Total amount must be above 0.', true); return; }
@@ -1467,7 +1544,11 @@ async function saveCaseForm() {
     return;
   }
 
-  const data = { date, company, pic, amount, invoices, sellingPct, costPct, referralPct,
+  // keep any payments already recorded against a referral when editing (matched by row position)
+  const existing = editingId ? cases.find(c => c.id === editingId) : null;
+  const referrals = refRows.map((r, i) => ({ name: r.name, pct: r.pct,
+    payments: (existing && existing.referrals && existing.referrals[i] && existing.referrals[i].payments) || [] }));
+  const data = { date, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals,
     referralName: document.getElementById('f_referralName').value.trim() };
 
   const wasEditing = !!editingId;
@@ -1910,12 +1991,12 @@ function renderDetail() {
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
   const legHTML = (title, listKey, txns, got, target, status) => `
-    <div class="leg ${LEG_CLASS[listKey]}">
+    <div class="leg ${LEG_CLASS[listKey] || 'leg-referral'}">
       <div class="leg-status-row">
         <h3>${title}</h3>
         <span class="badge ${status}">${{ full: 'Full', partial: 'Partial', none: 'Not yet' }[status]}</span>
       </div>
-      <div class="target">${listKey === 'clientPayouts' ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
+      <div class="target">${(listKey === 'clientPayouts' || listKey.startsWith('referrals')) ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
       ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th>${locked ? '' : '<th></th>'}</tr></thead><tbody>
         ${txns.map(t => `<tr>
           <td>${fmtDate(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
@@ -1945,7 +2026,7 @@ function renderDetail() {
     <div class="figures">
       <div class="fig"><div class="label">Invoice Amount</div><div class="value">${fmt(x.amount)}</div></div>
       <div class="fig"><div class="label">Selling / Cost / Referral</div><div class="value">${pct(c.sellingPct)} / ${pct(c.costPct)} / ${pct(c.referralPct)}</div></div>
-      <div class="fig"><div class="label">Referral Fee</div><div class="value">${fmt(x.referralAmount)}</div></div>
+      <div class="fig"><div class="label">Referral Fee${(c.referrals || []).length > 1 ? ' (' + c.referrals.length + ' referrals)' : ''}</div><div class="value">${fmt(x.referralAmount)}${x.referralAmount > TOL ? `<div style="font-size:11px;color:var(--muted);font-weight:500">paid ${fmt(x.referralPaidAmt)}</div>` : ''}</div></div>
       <div class="fig"><div class="label">Profit${x.closed ? ' (actual)' : ' (expected)'}</div><div class="value" style="color:var(--green)">${fmt(x.displayProfit)} (${pct(x.displayPct)})</div></div>
     </div>
 
@@ -1969,13 +2050,18 @@ function renderDetail() {
 
     <div class="toggles">
       <label><input type="checkbox" ${c.invoiceIssued ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="draftToggle('invoiceIssued',this.checked)"> Invoice Issued</label>
-      ${x.referralAmount > TOL ? `<label><input type="checkbox" ${c.referralPaid ? 'checked' : ''} ${locked ? 'disabled' : ''} onchange="draftToggle('referralPaid',this.checked)"> Referral Paid (${fmt(x.referralAmount)})</label>` : ''}
     </div>
 
     <div class="legs">
       ${legHTML('1 · Payment from Customer', 'customerPayments', c.customerPayments, x.recvCustomer, x.expectedCustomer, x.sCustomer)}
       ${legHTML('2 · Cash from Supplier', 'supplierPayments', c.supplierPayments, x.recvSupplier, x.expectedSupplier, x.sSupplier)}
       ${legHTML('3 · Cash Paid to Client', 'clientPayouts', c.clientPayouts, x.paidClient, x.expectedPayout, x.sPayout)}
+      ${(c.referrals || []).map((r, i) => {
+        const fee = x.amount * (Number(r.pct) || 0) / 100;
+        if (fee <= TOL) return '';
+        const got = sum(r.payments || []);
+        return legHTML(`${4 + i} · Referral Fee${r.name ? ' — ' + esc(r.name) : ''} (${pct(r.pct)})`, `referrals.${i}.payments`, r.payments || [], got, fee, legStatusOf(got, fee));
+      }).join('')}
     </div>
 
     <div class="modal-actions">
@@ -2009,7 +2095,7 @@ function fillToClose() {
     ['Supplier cash-in', amt * (1 - (Number(c.costPct) || 0) / 100) - sum(c.supplierPayments)],
     ['Client payout', amt * (1 - (Number(c.sellingPct) || 0) / 100) - sum(c.clientPayouts)]
   ].filter(([l, g]) => g > 0.01).map(([l, g]) => `${l} short RM${g.toFixed(2)}`);
-  const refNote = (computed(c).referralAmount > TOL && !c.referralPaid) ? ' Referral still unpaid.' : '';
+  const refNote = !computed(c).referralDone ? ' Referral fee not fully paid yet.' : '';
   if (shortfalls.length)
     notify('Ready to close ✓ (' + shortfalls.join('; ') + '.' + refNote + ' Cash on hand is not affected.) Now click 💾 Save Changes.');
   else
@@ -2070,7 +2156,6 @@ async function unlockDetail() {
 
 function draftToggle(key, val) {
   detailDraft[key] = val;
-  if (key === 'referralPaid') detailDraft.referralPaidDate = val ? today() : undefined;
   detailDirty = true;
   renderDetail();
 }
@@ -2260,18 +2345,29 @@ async function savePartners() {
   notify('Partner names saved ✓');
 }
 
+// resolve a payment list on the draft: a flat leg ('customerPayments') or a nested referral ('referrals.0.payments')
+function draftList(listKey) {
+  if (!listKey.includes('.')) return (detailDraft[listKey] = detailDraft[listKey] || []);
+  const [root, idx, sub] = listKey.split('.');
+  const arr = (detailDraft[root] = detailDraft[root] || []);
+  const o = (arr[idx] = arr[idx] || {});
+  return (o[sub] = o[sub] || []);
+}
+
 function addTxn(listKey, presetAmount) {
   const amount = presetAmount !== undefined ? presetAmount : Number(document.getElementById(`d_${listKey}_amount`).value);
   if (!amount || amount <= 0) { notify('Please enter a payment amount.', true); return; }
   const date = document.getElementById(`d_${listKey}_date`).value || today();
   const note = document.getElementById(`d_${listKey}_note`).value.trim();
-  (detailDraft[listKey] = detailDraft[listKey] || []).push({ id: uid(), date, amount, note });
+  draftList(listKey).push({ id: uid(), date, amount, note });
   detailDirty = true;
   renderDetail();
 }
 
 function deleteTxn(listKey, txnId) {
-  detailDraft[listKey] = (detailDraft[listKey] || []).filter(t => t.id !== txnId);
+  const list = draftList(listKey);
+  const keep = list.filter(t => t.id !== txnId);
+  list.length = 0; list.push(...keep);   // mutate in place so a nested referral list stays attached
   detailDirty = true;
   renderDetail();
 }
@@ -2488,6 +2584,7 @@ async function createBatchCases() {
   for (const { r, amount, date } of jobs) {
     const draft = { date, company: r.customer, pic: r.agent, amount,
       sellingPct: r.sellingPct, costPct: r.costPct, referralPct: r.referralPct, referralName: r.referralName || '',
+      referrals: ((Number(r.referralPct) || 0) > 0 || r.referralName) ? [{ name: r.referralName || '', pct: r.referralPct || 0, payments: [] }] : [],
       invoiceIssued: false, referralPaid: false, customerPayments: [], supplierPayments: [], clientPayouts: [],
       recurringId: r.id };
     try {
@@ -2784,8 +2881,7 @@ function prefillFormFromRec(r) {
   if (sel && [...sel.options].some(o => o.value === r.agent)) { sel.value = r.agent; }
   document.getElementById('f_selling').value = r.sellingPct;
   document.getElementById('f_cost').value = r.costPct;
-  document.getElementById('f_referral').value = r.referralPct;
-  document.getElementById('f_referralName').value = r.referralName || '';
+  renderReferralRows(((Number(r.referralPct) || 0) > 0 || r.referralName) ? [{ name: r.referralName || '', pct: r.referralPct || 0 }] : []);
   updatePreview();
 }
 
