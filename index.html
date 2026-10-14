@@ -534,7 +534,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.1.0 (14 Oct 2026)';
+const APP_VERSION = '4.2.0 (14 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1036,9 +1036,12 @@ function cashMovements() {
     const x = computed(c);
     for (const t of c.supplierPayments || []) moves.push({ date: t.date, amount: +t.amount, label: `Cash in from supplier — ${c.company}`, note: t.note || '' });
     for (const t of c.clientPayouts || []) moves.push({ date: t.date, amount: -t.amount, label: `Cash paid to client — ${c.company}`, note: t.note || '' });
-    // each referral payment (partial or full) is its own dated cash-out
-    for (const r of c.referrals || []) for (const t of r.payments || [])
+    // each referral payment (partial or full) is its own dated cash-out —
+    // except ones ticked 🏦 bank transfer, which never touched the cash pile
+    for (const r of c.referrals || []) for (const t of r.payments || []) {
+      if (t.bank) continue;
       moves.push({ date: t.date, amount: -(Number(t.amount) || 0), label: `Referral fee — ${c.company}${r.name ? ' (' + r.name + ')' : ''}`, note: t.note || '' });
+    }
   }
   for (const a of adjustments) moves.push({ date: a.date, amount: a.type === 'in' ? +a.amount : -a.amount, label: a.isExpense ? '💸 Expense' : (a.type === 'in' ? 'Cash in' : 'Cash out'), note: a.note || '', adjId: a.id });
   for (const w of withdrawals) moves.push({ date: w.date, amount: -(Number(w.amount) || 0), label: `Profit withdrawal — ${w.partner}`, note: w.note || '' });
@@ -1999,7 +2002,7 @@ function renderDetail() {
       <div class="target">${(listKey === 'clientPayouts' || listKey.startsWith('referrals')) ? 'Paid' : 'Received'} ${fmt(got)} of ${fmt(target)} — balance ${fmt(Math.max(0, target - got))}</div>
       ${txns.length ? `<table><thead><tr><th>Date</th><th class="num">Amount</th><th>Note</th>${locked ? '' : '<th></th>'}</tr></thead><tbody>
         ${txns.map(t => `<tr>
-          <td>${fmtDate(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${esc(t.note || '')}</td>
+          <td>${fmtDate(t.date)}</td><td class="num">${fmt(t.amount)}</td><td>${t.bank ? '<span class="badge na" title="Paid by bank transfer — not counted in cash on hand">🏦 bank</span> ' : ''}${esc(t.note || '')}</td>
           ${locked ? '' : `<td><button class="btn-danger btn-small" onclick="deleteTxn('${listKey}','${t.id}')">×</button></td>`}
         </tr>`).join('')}
       </tbody></table>` : ''}
@@ -2007,6 +2010,7 @@ function renderDetail() {
         <input type="date" id="d_${listKey}_date" value="${today()}">
         <input type="number" class="amt" id="d_${listKey}_amount" placeholder="Amount (RM)" step="0.01" min="0">
         <input type="text" class="note" id="d_${listKey}_note" placeholder="Note (optional)">
+        ${listKey.startsWith('referrals') ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;white-space:nowrap" title="Tick if you paid this by bank transfer — it will NOT reduce cash on hand"><input type="checkbox" id="d_${listKey}_bank" style="width:17px;height:17px;accent-color:var(--accent)"> 🏦 Bank transfer</label>` : ''}
         <button class="btn-primary btn-small" onclick="addTxn('${listKey}')">Add Payment</button>
         ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
         ${(listKey === 'supplierPayments' || listKey === 'clientPayouts') ? (() => {
@@ -2375,7 +2379,10 @@ function addTxn(listKey, presetAmount) {
   if (!amount || amount <= 0) { notify('Please enter a payment amount.', true); return; }
   const date = document.getElementById(`d_${listKey}_date`).value || today();
   const note = document.getElementById(`d_${listKey}_note`).value.trim();
-  draftList(listKey).push({ id: uid(), date, amount, note });
+  const bankEl = document.getElementById(`d_${listKey}_bank`);          // referral legs only
+  const txn = { id: uid(), date, amount, note };
+  if (bankEl && bankEl.checked) txn.bank = true;                        // paid by bank transfer → not a cash movement
+  draftList(listKey).push(txn);
   detailDirty = true;
   renderDetail();
 }
