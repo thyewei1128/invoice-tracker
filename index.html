@@ -339,7 +339,7 @@
 <div class="cards" id="summaryCards"></div>
 
 <div class="toolbar">
-  <input type="text" id="search" placeholder="Search company…" oninput="onFilterChange()">
+  <input type="text" id="search" placeholder="Search company or invoice no…" oninput="onFilterChange()">
   <select id="filterPic" onchange="onFilterChange()"><option value="">All Agents</option></select>
   <select id="filterStatus" onchange="onFilterChange()">
     <option value="">All status</option>
@@ -534,7 +534,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.2.0 (14 Oct 2026)';
+const APP_VERSION = '4.3.0 (15 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1240,7 +1240,12 @@ function render() {
   const fStatus = document.getElementById('filterStatus').value;
 
   let list = dateFiltered.map(c => ({ c, x: computed(c) }));
-  if (q) list = list.filter(r => (r.c.company || '').toLowerCase().includes(q));
+  if (q) {
+    // match the company name OR any invoice number; invoice match ignores spaces/dashes ("2505067" finds "GQS2505-067")
+    const qc = q.replace(/[\s\-]/g, '');
+    list = list.filter(r => (r.c.company || '').toLowerCase().includes(q)
+      || (qc && (r.c.invoices || []).some(i => (i.no || '').toLowerCase().replace(/[\s\-]/g, '').includes(qc))));
+  }
   if (fPic) list = list.filter(r => r.c.pic === fPic);
   if (fStatus) list = list.filter(r => fStatus === 'cancelled' ? !!r.c.cancelledAt
     : (fStatus === 'closed' ? (r.x.closed && !r.c.cancelledAt) : (!r.x.closed && !r.c.cancelledAt)));
