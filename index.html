@@ -157,8 +157,7 @@
   @media (max-width: 640px) {
     .inv-row { flex-wrap: wrap; }
     .inv-row .inv-no, .inv-row .inv-amt, .inv-row .inv-date { font-size: 16px; }
-    .inv-row .inv-del { order: 1; }                      /* ✕ stays on the first line */
-    .inv-row .inv-date { order: 2; flex: 1 1 100%; min-height: 37px; }   /* date drops to its own line */
+    .inv-row .inv-date { flex: 1 1 100%; min-height: 37px; }   /* date on its own first line; no · amount · ✕ wrap below */
   }
 
   .calc-preview { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; margin-top: 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
@@ -540,7 +539,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.6.0 (16 Oct 2026)';
+const APP_VERSION = '4.6.1 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1425,9 +1424,9 @@ function openCaseForm(id) {
 /* ----- invoice line items in the case form (case total = their sum) ----- */
 function invRowHTML(no, amount, date) {
   return `<div class="inv-row">
+    <input class="inv-date" type="date" title="Invoice date (on the invoice)" value="${esc(date || '')}" onchange="invDateChanged(this)">
     <input class="inv-no" placeholder="Invoice no." value="${esc(no || '')}">
     <input class="inv-amt" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Amount (RM)" value="${(amount != null && amount !== '') ? amount : ''}" oninput="recalcInvoices()">
-    <input class="inv-date" type="date" title="Invoice date (on the invoice)" value="${esc(date || '')}" onchange="invDateChanged(this)">
     <button type="button" class="inv-del" title="Remove" onclick="this.closest('.inv-row').remove(); recalcInvoices()">✕</button>
   </div>`;
 }
@@ -2072,8 +2071,8 @@ function renderDetail() {
     ${(c.invoices && c.invoices.length) ? `<div class="leg" style="margin-bottom:14px">
       <h3>📄 Invoices (${c.invoices.length})</h3>
       <table style="margin-top:6px"><tbody>
-        ${c.invoices.map(i => `<tr><td>${esc(i.no) || '<span style="color:var(--muted)">(no number)</span>'}</td><td style="color:var(--muted);white-space:nowrap">${i.date ? fmtDate(i.date) : '—'}</td><td class="num"><b>${fmt(i.amount)}</b></td></tr>`).join('')}
-        <tr style="border-top:2px solid var(--tan-3)"><td><b>Total</b></td><td></td><td class="num"><b>${fmt(invoicesTotal(c.invoices))}</b></td></tr>
+        ${c.invoices.map(i => `<tr><td style="color:var(--muted);white-space:nowrap">${i.date ? fmtDate(i.date) : '—'}</td><td>${esc(i.no) || '<span style="color:var(--muted)">(no number)</span>'}</td><td class="num"><b>${fmt(i.amount)}</b></td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--tan-3)"><td></td><td><b>Total</b></td><td class="num"><b>${fmt(invoicesTotal(c.invoices))}</b></td></tr>
       </tbody></table>
     </div>` : ''}
 
