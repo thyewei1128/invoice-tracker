@@ -539,7 +539,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.7.0 (16 Oct 2026)';
+const APP_VERSION = '4.8.0 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -2503,6 +2503,7 @@ document.addEventListener('visibilitychange', () => {
 const INFO = {
   app: { t: 'About this system', b: 'Track each case through 4 steps: <b>1)</b> you issue the invoice → <b>2)</b> customer pays you → <b>3)</b> supplier passes you cash → <b>4)</b> you pay cash to your client.<br><br>Partial payments are supported at every step. A case closes automatically once the invoice is issued, all three payments are complete, and the referral (if any) is paid.<br><br>Use the period buttons (Today / 7 Days / 1 Month…) to filter the dashboard and case list by date.' },
   cases: { t: 'How to use the case list', b: '<b>Update</b> (or tap the row) — open the case to tick Invoice Issued and key in payments. Partial amounts are fine. Click <b>💾 Save</b> to keep changes; Cancel or ✕ discards them.<br><br><b>Edit</b> — change company, agent, amount or %.<br><b>Del</b> — delete the case (tap twice to confirm).<br><br>🔒 Closed cases are locked — unlocking needs your login password.<br><br>Click any column title to sort A–Z / Z–A. Data saves to the cloud automatically — the 🏢 button at the top refreshes it and switches company. Backups and exports are handled by DLS Technology.' },
+  referral: { t: 'Referral Payouts', b: 'One row per referral person, across all their cases:<br><br><b>Owed</b> = total commission (invoice amount × referral %). <b>Paid</b> = everything you have paid them so far. <b>Balance</b> = owed − paid.<br><br><b>Paid in month</b> = what you paid them in the month you pick above; the individual payouts for that month are listed underneath. 🏦 marks a payout made by bank transfer (not from cash on hand).<br><br>Note: commission settles in proportion to what the customer has paid, so a balance is not necessarily payable yet.' },
   cash: { t: 'Cash Book', b: 'Shows every cash movement with a running balance: cash IN from suppliers, cash OUT to clients, referral fees, profit withdrawals, and your own money in/out.<br><br>Customer invoice payments are bank transfers, so they are <b>not</b> counted in cash on hand.<br><br>If the balance is negative, that is your own money currently fronted.' },
   profit: { t: 'Profit & Partners', b: 'Total profit comes from <b>closed cases only</b> — a case must be fully collected and paid out before its profit enters the pool.<br><br>Profit splits equally between the 3 partners. Record each withdrawal here; it automatically appears as cash out in the Cash Book.<br><br>Balance Profit = total profit − total withdrawn.' },
 };
@@ -2536,6 +2537,48 @@ document.addEventListener('keydown', e => {
 });
 
 /* ---------- finance & profile pages ---------- */
+/* ---------- referral payouts report (Finance → 👥 Referrals) ---------- */
+let refMonth = today().slice(0, 7);   // YYYY-MM for the "paid in month" column + ledger
+function referralReportHTML() {
+  // group every referral across all live cases by NAME (case-insensitive)
+  const groups = new Map();
+  for (const c of cases) {
+    if (c.cancelledAt) continue;
+    const amount = Number(c.amount) || 0;
+    for (const r of c.referrals || []) {
+      const fee = amount * (Number(r.pct) || 0) / 100;
+      if (fee <= TOL && !(r.payments || []).length) continue;
+      const key = (r.name || '').trim().toLowerCase() || '(no name)';
+      const g = groups.get(key) || { name: (r.name || '').trim() || '(no name)', owed: 0, paid: 0, month: 0, cases: new Set(), ledger: [] };
+      g.owed += fee; g.cases.add(c.id);
+      for (const p of r.payments || []) {
+        const a = Number(p.amount) || 0; g.paid += a;
+        if ((p.date || '').startsWith(refMonth)) { g.month += a; g.ledger.push({ date: p.date, company: c.company, amount: a, bank: !!p.bank }); }
+      }
+      groups.set(key, g);
+    }
+  }
+  const rows = [...groups.values()].sort((a, b) => b.paid - a.paid);
+  const tot = rows.reduce((t, g) => ({ owed: t.owed + g.owed, paid: t.paid + g.paid, month: t.month + g.month }), { owed: 0, paid: 0, month: 0 });
+  const ledger = rows.flatMap(g => g.ledger.map(l => ({ ...l, name: g.name }))).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const [my, mm] = refMonth.split('-'); const monthLabel = `${mm}/${my}`;
+  return `
+    <div class="leg" style="margin-top:14px">
+      <h3 style="margin-bottom:8px">Referral payouts · amounts in RM <button class="info-btn" onclick="showInfo('referral')">!</button></h3>
+      <div class="txn-form" style="margin:0 0 10px;align-items:center"><label style="font-size:13px;font-weight:600">Month</label><input type="month" id="refMonth" value="${refMonth}" onchange="refMonth=this.value; renderFinance()"></div>
+      ${rows.length ? `<table><thead><tr><th>Referral</th><th class="num">Owed</th><th class="num">Paid (all time)</th><th class="num">Balance</th><th class="num">Paid in ${monthLabel}</th></tr></thead><tbody>
+        ${rows.map(g => `<tr><td><b>${esc(g.name)}</b><div style="font-size:11px;color:var(--muted)">${g.cases.size} case${g.cases.size === 1 ? '' : 's'}</div></td><td class="num">${fmtN(g.owed)}</td><td class="num">${fmtN(g.paid)}</td><td class="num" style="color:${g.owed - g.paid > TOL ? 'var(--red)' : 'var(--green)'}">${fmtN(Math.max(0, g.owed - g.paid))}</td><td class="num"><b>${fmtN(g.month)}</b></td></tr>`).join('')}
+        <tr class="total-row"><td>Total</td><td class="num">${fmtN(tot.owed)}</td><td class="num">${fmtN(tot.paid)}</td><td class="num">${fmtN(Math.max(0, tot.owed - tot.paid))}</td><td class="num">${fmtN(tot.month)}</td></tr>
+      </tbody></table>` : '<div style="color:var(--muted);font-size:13px">No referrals on any case yet.</div>'}
+    </div>
+    <div class="leg" style="margin-top:14px">
+      <h3 style="margin-bottom:8px">Payouts in ${monthLabel}</h3>
+      ${ledger.length ? `<table><thead><tr><th>Date</th><th>Referral</th><th>Case</th><th class="num">Amount</th></tr></thead><tbody>
+        ${ledger.map(l => `<tr><td>${fmtDate(l.date)}</td><td>${esc(l.name)}</td><td>${esc(l.company)}</td><td class="num">${fmtN(l.amount)}${l.bank ? ' <span class="badge na" title="paid by bank transfer">🏦</span>' : ''}</td></tr>`).join('')}
+      </tbody></table>` : `<div style="color:var(--muted);font-size:13px">No referral payouts in ${monthLabel}.</div>`}
+    </div>`;
+}
+
 let financeTab = 'cash';   // which section shows at the bottom of the Finance page
 function openFinance() {
   if (userRole !== 'owner') { notify('Owner access only.', true); return; }
@@ -2557,8 +2600,9 @@ function renderFinance() {
     <div class="fin-tabs">
       <button class="fin-tab ${financeTab === 'cash' ? 'active' : ''}" onclick="setFinTab('cash')">🪙 Cash Book</button>
       <button class="fin-tab ${financeTab === 'profit' ? 'active' : ''}" onclick="setFinTab('profit')">🤝 Profit Withdrawal</button>
+      <button class="fin-tab ${financeTab === 'referral' ? 'active' : ''}" onclick="setFinTab('referral')">👥 Referrals</button>
     </div>
-    <div id="financeBody">${financeTab === 'cash' ? cashBookHTML() : profitHTML()}</div>
+    <div id="financeBody">${financeTab === 'cash' ? cashBookHTML() : financeTab === 'referral' ? referralReportHTML() : profitHTML()}</div>
     </div>`;
 }
 
