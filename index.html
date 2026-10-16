@@ -539,7 +539,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.8.0 (16 Oct 2026)';
+const APP_VERSION = '4.8.1 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -2549,11 +2549,11 @@ function referralReportHTML() {
       const fee = amount * (Number(r.pct) || 0) / 100;
       if (fee <= TOL && !(r.payments || []).length) continue;
       const key = (r.name || '').trim().toLowerCase() || '(no name)';
-      const g = groups.get(key) || { name: (r.name || '').trim() || '(no name)', owed: 0, paid: 0, month: 0, cases: new Set(), ledger: [] };
-      g.owed += fee; g.cases.add(c.id);
+      const g = groups.get(key) || { name: (r.name || '').trim() || '(no name)', owed: 0, paid: 0, month: 0, cases: new Map(), ledger: [] };
+      g.owed += fee; g.cases.set(c.id, c.company);
       for (const p of r.payments || []) {
         const a = Number(p.amount) || 0; g.paid += a;
-        if ((p.date || '').startsWith(refMonth)) { g.month += a; g.ledger.push({ date: p.date, company: c.company, amount: a, bank: !!p.bank }); }
+        if ((p.date || '').startsWith(refMonth)) { g.month += a; g.ledger.push({ date: p.date, caseId: c.id, company: c.company, amount: a, bank: !!p.bank }); }
       }
       groups.set(key, g);
     }
@@ -2567,14 +2567,14 @@ function referralReportHTML() {
       <h3 style="margin-bottom:8px">Referral payouts · amounts in RM <button class="info-btn" onclick="showInfo('referral')">!</button></h3>
       <div class="txn-form" style="margin:0 0 10px;align-items:center"><label style="font-size:13px;font-weight:600">Month</label><input type="month" id="refMonth" value="${refMonth}" onchange="refMonth=this.value; renderFinance()"></div>
       ${rows.length ? `<table><thead><tr><th>Referral</th><th class="num">Owed</th><th class="num">Paid (all time)</th><th class="num">Balance</th><th class="num">Paid in ${monthLabel}</th></tr></thead><tbody>
-        ${rows.map(g => `<tr><td><b>${esc(g.name)}</b><div style="font-size:11px;color:var(--muted)">${g.cases.size} case${g.cases.size === 1 ? '' : 's'}</div></td><td class="num">${fmtN(g.owed)}</td><td class="num">${fmtN(g.paid)}</td><td class="num" style="color:${g.owed - g.paid > TOL ? 'var(--red)' : 'var(--green)'}">${fmtN(Math.max(0, g.owed - g.paid))}</td><td class="num"><b>${fmtN(g.month)}</b></td></tr>`).join('')}
+        ${rows.map(g => `<tr><td><b>${esc(g.name)}</b><div style="font-size:11px;color:var(--muted)">${[...g.cases].map(([id, name]) => `<a href="#" onclick="openDetail('${id}');return false" style="color:var(--blue);text-decoration:none" title="Open this case">${esc(name)}</a>`).join(' · ')}</div></td><td class="num">${fmtN(g.owed)}</td><td class="num">${fmtN(g.paid)}</td><td class="num" style="color:${g.owed - g.paid > TOL ? 'var(--red)' : 'var(--green)'}">${fmtN(Math.max(0, g.owed - g.paid))}</td><td class="num"><b>${fmtN(g.month)}</b></td></tr>`).join('')}
         <tr class="total-row"><td>Total</td><td class="num">${fmtN(tot.owed)}</td><td class="num">${fmtN(tot.paid)}</td><td class="num">${fmtN(Math.max(0, tot.owed - tot.paid))}</td><td class="num">${fmtN(tot.month)}</td></tr>
       </tbody></table>` : '<div style="color:var(--muted);font-size:13px">No referrals on any case yet.</div>'}
     </div>
     <div class="leg" style="margin-top:14px">
       <h3 style="margin-bottom:8px">Payouts in ${monthLabel}</h3>
       ${ledger.length ? `<table><thead><tr><th>Date</th><th>Referral</th><th>Case</th><th class="num">Amount</th></tr></thead><tbody>
-        ${ledger.map(l => `<tr><td>${fmtDate(l.date)}</td><td>${esc(l.name)}</td><td>${esc(l.company)}</td><td class="num">${fmtN(l.amount)}${l.bank ? ' <span class="badge na" title="paid by bank transfer">🏦</span>' : ''}</td></tr>`).join('')}
+        ${ledger.map(l => `<tr><td>${fmtDate(l.date)}</td><td>${esc(l.name)}</td><td><a href="#" onclick="openDetail('${l.caseId}');return false" style="color:var(--blue);text-decoration:none;font-weight:600" title="Open this case">${esc(l.company)}</a></td><td class="num">${fmtN(l.amount)}${l.bank ? ' <span class="badge na" title="paid by bank transfer">🏦</span>' : ''}</td></tr>`).join('')}
       </tbody></table>` : `<div style="color:var(--muted);font-size:13px">No referral payouts in ${monthLabel}.</div>`}
     </div>`;
 }
