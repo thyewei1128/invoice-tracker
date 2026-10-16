@@ -539,7 +539,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.6.1 (16 Oct 2026)';
+const APP_VERSION = '4.7.0 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -2039,14 +2039,27 @@ function renderDetail() {
         <input type="text" class="note" id="d_${listKey}_note" placeholder="Note (optional)">
         ${listKey.startsWith('referrals') ? `<label style="display:flex;align-items:center;gap:6px;font-size:13px;font-weight:600;white-space:nowrap" title="Tick if you paid this by bank transfer — it will NOT reduce cash on hand"><input type="checkbox" id="d_${listKey}_bank" style="width:17px;height:17px;accent-color:var(--accent)"> 🏦 Bank transfer</label>` : ''}
         <button class="btn-primary btn-small" onclick="addTxn('${listKey}')">Add Payment</button>
-        ${target - got > TOL ? `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${(target - got).toFixed(2)})">Add Full Balance</button>` : ''}
-        ${(listKey === 'supplierPayments' || listKey === 'clientPayouts') ? (() => {
-          // suggest the amount that matches what the CUSTOMER has paid so far: paid × (1 − cost%) for the
-          // supplier, paid × (1 − selling%) for the client payout — minus what this leg already has.
-          const rate = listKey === 'supplierPayments' ? 1 - (Number(c.costPct) || 0) / 100 : 1 - (Number(c.sellingPct) || 0) / 100;
-          const sug = Math.min(x.recvCustomer * rate - got, target - got);
-          return sug > TOL ? `<button class="btn-accent btn-small" onclick="suggestTxn('${listKey}',${sug.toFixed(2)})" title="Matches the customer's payments so far">Match customer paid · ${fmt(sug)}</button>` : '';
-        })() : ''}
+        ${(() => {
+          const full = target - got;
+          if (full <= TOL) return '';
+          // Referral legs settle in proportion to what the CUSTOMER has paid: allowed = customer paid × referral %.
+          // Until the customer has fully paid, only "Match customer paid" is offered (and addTxn enforces the cap).
+          if (listKey.startsWith('referrals')) {
+            const i = +listKey.split('.')[1]; const pct = Number((c.referrals[i] || {}).pct) || 0;
+            const allowedLeft = Math.min(full, x.recvCustomer * pct / 100 - got);
+            if (allowedLeft >= full - TOL) return `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${full.toFixed(2)})">Add Full Balance</button>`;
+            return allowedLeft > TOL ? `<button class="btn-accent btn-small" onclick="suggestTxn('${listKey}',${allowedLeft.toFixed(2)})" title="Customer paid ${fmt(x.recvCustomer)} × ${pct}%">Match customer paid · ${fmt(allowedLeft)}</button>` : `<span style="font-size:12px;color:var(--muted);align-self:center">waiting for customer payment</span>`;
+          }
+          // supplier / client payout: full balance, plus a suggestion matching the customer's payments so far
+          // (paid × (1 − cost%) for the supplier, paid × (1 − selling%) for the client payout) minus what this leg has.
+          let html = `<button class="btn-secondary btn-small" onclick="addTxn('${listKey}',${full.toFixed(2)})">Add Full Balance</button>`;
+          if (listKey === 'supplierPayments' || listKey === 'clientPayouts') {
+            const rate = listKey === 'supplierPayments' ? 1 - (Number(c.costPct) || 0) / 100 : 1 - (Number(c.sellingPct) || 0) / 100;
+            const sug = Math.min(x.recvCustomer * rate - got, full);
+            if (sug > TOL) html += `<button class="btn-accent btn-small" onclick="suggestTxn('${listKey}',${sug.toFixed(2)})" title="Matches the customer's payments so far">Match customer paid · ${fmt(sug)}</button>`;
+          }
+          return html;
+        })()}
       </div>`}
     </div>`;
 
@@ -2404,6 +2417,17 @@ function suggestTxn(listKey, amt) {
 function addTxn(listKey, presetAmount) {
   const amount = presetAmount !== undefined ? presetAmount : Number(document.getElementById(`d_${listKey}_amount`).value);
   if (!amount || amount <= 0) { notify('Please enter a payment amount.', true); return; }
+  // referral commission can only be paid in proportion to what the customer has paid: cap = customer paid × referral %
+  if (listKey.startsWith('referrals')) {
+    const i = +listKey.split('.')[1];
+    const pct = Number(((detailDraft.referrals || [])[i] || {}).pct) || 0;
+    const allowed = computed(detailDraft).recvCustomer * pct / 100;
+    const already = sum(draftList(listKey));
+    if (already + amount > allowed + TOL) {
+      notify(`Referral can only be settled up to ${fmt(allowed)} so far (customer paid ${fmt(computed(detailDraft).recvCustomer)} × ${pct}%). ${fmt(Math.max(0, allowed - already))} is still payable.`, true);
+      return;
+    }
+  }
   const date = document.getElementById(`d_${listKey}_date`).value || today();
   const note = document.getElementById(`d_${listKey}_note`).value.trim();
   const bankEl = document.getElementById(`d_${listKey}_bank`);          // referral legs only
