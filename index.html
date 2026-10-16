@@ -534,7 +534,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.3.0 (15 Oct 2026)';
+const APP_VERSION = '4.4.0 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1121,7 +1121,8 @@ function renderSummary(list, rangeOn) {
     <div class="card"><div class="label">Owed by Suppliers${tag}</div><div class="value amber">${fmt(outstandingSupplier)}</div></div>
     <div class="card"><div class="label">Profit (Closed)${tag}</div><div class="value green">${fmt(realized)}</div></div>
     <div class="card"><div class="label">Profit (Pending)${tag}</div><div class="value">${fmt(pending)}</div></div>
-    <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>`;
+    <div class="card"><div class="label">To Pay Out to Clients${tag}</div><div class="value red">${fmt(outstandingPayout)}</div></div>
+    <div class="card"><div class="label">Sales${tag}</div><div class="value">${fmt(list.reduce((s, c) => s + (Number(c.amount) || 0), 0))}</div><div style="font-size:11px;margin-top:2px;color:var(--muted)">total of all invoices · ${list.length} case${list.length === 1 ? '' : 's'}</div></div>`;
 }
 
 /* ---------- table totals ---------- */
