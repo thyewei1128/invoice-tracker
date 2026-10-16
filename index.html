@@ -369,7 +369,8 @@
       <div id="recPicker" style="display:none;margin-top:8px; width:100%"></div>
     </div>
     <div class="form-grid">
-      <div class="field"><label>Date</label><input type="date" id="f_date"></div>
+      <div class="field"><label>Transaction Date <span style="color:var(--muted);font-weight:400">(reports use this)</span></label><input type="date" id="f_date"></div>
+      <div class="field"><label>Invoice Date <span style="color:var(--muted);font-weight:400">(on the invoice, optional)</span></label><input type="date" id="f_invoiceDate"></div>
       <div class="field"><label>Total Amount (RM)</label><input type="number" id="f_amount" readonly tabindex="-1" style="background:var(--accent-soft); font-weight:800"></div>
       <div class="field full">
         <label>Invoices <span style="color:var(--muted); font-weight:400">— add each invoice number &amp; its amount</span></label>
@@ -534,7 +535,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.4.0 (16 Oct 2026)';
+const APP_VERSION = '4.5.0 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -601,7 +602,7 @@ const referralsFromRow = r => {
   return [{ name: r.referral_name || '', pct,
     payments: (r.referral_paid && fee > 0) ? [{ id: uid(), date: r.referral_paid_date || r.case_date || today(), amount: fee, note: '' }] : [] }];
 };
-const rowToCase = r => { const refs = referralsFromRow(r); return { id: r.id, date: r.case_date, company: r.customer, pic: r.agent, amount: +r.amount,
+const rowToCase = r => { const refs = referralsFromRow(r); return { id: r.id, date: r.case_date, invoiceDate: r.invoice_date || null, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: refPctTotal(refs), referralName: refs.map(x => x.name).filter(Boolean).join(' + '), referrals: refs,
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
   forceClosed: !!r.force_closed, recurringId: r.recurring_id || null,
@@ -611,7 +612,7 @@ const rowToCase = r => { const refs = referralsFromRow(r); return { id: r.id, da
   cancelledAt: r.cancelled_at || null, cancelledBy: r.cancelled_by || null }; };
 // when invoices exist, the case total (amount) is always their sum
 const invoicesTotal = list => (Array.isArray(list) ? list : []).reduce((s, i) => s + (Number(i.amount) || 0), 0);
-const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, customer: c.company || '', agent: c.pic || '',
+const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, invoice_date: c.invoiceDate || null, customer: c.company || '', agent: c.pic || '',
   amount: (Array.isArray(c.invoices) && c.invoices.length) ? invoicesTotal(c.invoices) : (c.amount || 0),
   invoices: Array.isArray(c.invoices) ? c.invoices : [],
   selling_pct: c.sellingPct || 0, cost_pct: c.costPct || 0,
@@ -1177,7 +1178,7 @@ function caseCardHTML(c, x) {
       <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</div>${invNoSummary(c) ? `<div class="cc-ref">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
       ${statusBadge}
     </div>
-    <div class="cc-meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '—'}</div>
+    <div class="cc-meta">${fmtDate(c.date)}${c.invoiceDate ? ' · Inv ' + fmtDate(c.invoiceDate) : ''} · Agent: ${esc(c.pic) || '—'}</div>
     <div class="cc-figs">
       <div class="cc-fig"><span class="cc-fig-label">Amount</span><span class="cc-fig-val">${fmt(x.amount)}</span></div>
       <div class="cc-fig"><span class="cc-fig-label">Profit</span><span class="cc-fig-val green">${fmt(x.displayProfit)} · ${pct(x.displayPct)}</span></div>
@@ -1289,7 +1290,7 @@ function render() {
 
   wrap.innerHTML = `<table>
     <thead><tr>
-      <th class="sortable" onclick="setSort('date')">Date${arrow('date')}</th>
+      <th class="sortable" onclick="setSort('date')" title="Transaction date — reports use this">Txn Date${arrow('date')}</th>
       <th class="sortable" onclick="setSort('company')">Company${arrow('company')}</th>
       <th class="sortable" onclick="setSort('pic')">Agent${arrow('pic')}</th>
       <th class="num sortable" onclick="setSort('amount')">Amount${arrow('amount')}</th>
@@ -1304,7 +1305,7 @@ function render() {
     <tbody>
     ${pageList.map(({ c, x }) => `
       <tr class="row ${c.recurringId ? 'from-rec' : ''}" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
-        <td>${fmtDate(c.date)}</td>
+        <td>${fmtDate(c.date)}${c.invoiceDate ? `<div style="font-size:11px;color:var(--muted)">Inv ${fmtDate(c.invoiceDate)}</div>` : ''}</td>
         <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${invNoSummary(c) ? `<div style="font-size:11px;color:var(--muted)">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
         <td class="num">${fmt(x.amount)}</td>
@@ -1405,6 +1406,7 @@ function openCaseForm(id) {
   document.getElementById('f_pic').style.display = 'none';
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
   document.getElementById('f_date').value = c ? c.date : today();
+  document.getElementById('f_invoiceDate').value = c ? (c.invoiceDate || '') : '';
   document.getElementById('f_company').value = c ? c.company : '';
   document.getElementById('f_pic').value = '';
   // invoices: use the case's list; an older case with an amount but no invoices seeds one row
@@ -1557,7 +1559,8 @@ async function saveCaseForm() {
   const existing = editingId ? cases.find(c => c.id === editingId) : null;
   const referrals = refRows.map((r, i) => ({ name: r.name, pct: r.pct,
     payments: (existing && existing.referrals && existing.referrals[i] && existing.referrals[i].payments) || [] }));
-  const data = { date, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals,
+  const invoiceDate = document.getElementById('f_invoiceDate').value || null;   // optional; reports stay on the transaction date
+  const data = { date, invoiceDate, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals,
     referralName: document.getElementById('f_referralName').value.trim() };
 
   const wasEditing = !!editingId;
@@ -1845,7 +1848,8 @@ function applyScanNews() {
   const { news, company, date } = pendingScan || { news: [], company: '', date: '' };
   const compEl = document.getElementById('f_company');
   if (company && compEl && !compEl.value.trim()) compEl.value = company;
-  if (date && document.getElementById('f_date')) document.getElementById('f_date').value = date;
+  // the date printed on the invoice is the INVOICE date — the transaction date stays as keyed (today)
+  if (date && document.getElementById('f_invoiceDate')) document.getElementById('f_invoiceDate').value = date;
   if (news.length) renderInvoiceRows([...getInvoicesFromForm(), ...news]);
   notify(news.length
     ? `📷 Added ${news.length} new invoice${news.length > 1 ? 's' : ''} — please CHECK, then set the %.`
@@ -2034,7 +2038,7 @@ function renderDetail() {
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
-        <div class="meta">${fmtDate(c.date)} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+        <div class="meta">Txn ${fmtDate(c.date)}${c.invoiceDate ? ' · Inv ' + fmtDate(c.invoiceDate) : ''} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
         ${userRole === 'owner' && (c.createdBy || c.updatedBy) ? `<div class="meta" style="font-size:11px">✍️ Created by <b>${esc(userMap[c.createdBy] || '—')}</b>${c.createdAt ? ' · ' + fmtDT(new Date(c.createdAt).getTime()) : ''}${c.updatedBy ? `<br>✏️ Last edit by <b>${esc(userMap[c.updatedBy] || '—')}</b>${c.updatedAt ? ' · ' + fmtDT(new Date(c.updatedAt).getTime()) : ''}` : ''}</div>` : ''}
       </div>
       ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
