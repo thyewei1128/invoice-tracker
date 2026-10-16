@@ -153,7 +153,13 @@
   .inv-row .inv-no { flex: 1.3; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; }
   .inv-row .inv-amt { flex: 1; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; text-align: right; }
   .inv-row .inv-del { flex: none; width: 30px; height: 30px; border-radius: 8px; background: var(--red-soft); color: var(--red); border: none; font-size: 15px; font-weight: 700; padding: 0; }
-  @media (max-width: 640px) { .inv-row .inv-no, .inv-row .inv-amt { font-size: 16px; } }
+  .inv-row .inv-date { flex: 1; min-width: 0; padding: 8px 9px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; -webkit-appearance: none; appearance: none; }
+  @media (max-width: 640px) {
+    .inv-row { flex-wrap: wrap; }
+    .inv-row .inv-no, .inv-row .inv-amt, .inv-row .inv-date { font-size: 16px; }
+    .inv-row .inv-del { order: 1; }                      /* ✕ stays on the first line */
+    .inv-row .inv-date { order: 2; flex: 1 1 100%; min-height: 37px; }   /* date drops to its own line */
+  }
 
   .calc-preview { background: var(--accent-soft); border-radius: 10px; padding: 12px 16px; margin-top: 16px; font-size: 13px; display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
   .calc-preview b { font-variant-numeric: tabular-nums; }
@@ -370,7 +376,6 @@
     </div>
     <div class="form-grid">
       <div class="field"><label>Transaction Date <span style="color:var(--muted);font-weight:400">(reports use this)</span></label><input type="date" id="f_date"></div>
-      <div class="field"><label>Invoice Date <span style="color:var(--muted);font-weight:400">(on the invoice, optional)</span></label><input type="date" id="f_invoiceDate"></div>
       <div class="field"><label>Total Amount (RM)</label><input type="number" id="f_amount" readonly tabindex="-1" style="background:var(--accent-soft); font-weight:800"></div>
       <div class="field full">
         <label>Invoices <span style="color:var(--muted); font-weight:400">— add each invoice number &amp; its amount</span></label>
@@ -535,7 +540,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.5.0 (16 Oct 2026)';
+const APP_VERSION = '4.6.0 (16 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1406,7 +1411,6 @@ function openCaseForm(id) {
   document.getElementById('f_pic').style.display = 'none';
   document.getElementById('formTitle').textContent = c ? 'Edit Case' : 'New Case';
   document.getElementById('f_date').value = c ? c.date : today();
-  document.getElementById('f_invoiceDate').value = c ? (c.invoiceDate || '') : '';
   document.getElementById('f_company').value = c ? c.company : '';
   document.getElementById('f_pic').value = '';
   // invoices: use the case's list; an older case with an amount but no invoices seeds one row
@@ -1419,28 +1423,42 @@ function openCaseForm(id) {
 }
 
 /* ----- invoice line items in the case form (case total = their sum) ----- */
-function invRowHTML(no, amount) {
+function invRowHTML(no, amount, date) {
   return `<div class="inv-row">
     <input class="inv-no" placeholder="Invoice no." value="${esc(no || '')}">
     <input class="inv-amt" type="number" step="0.01" min="0" inputmode="decimal" placeholder="Amount (RM)" value="${(amount != null && amount !== '') ? amount : ''}" oninput="recalcInvoices()">
+    <input class="inv-date" type="date" title="Invoice date (on the invoice)" value="${esc(date || '')}" onchange="invDateChanged(this)">
     <button type="button" class="inv-del" title="Remove" onclick="this.closest('.inv-row').remove(); recalcInvoices()">✕</button>
   </div>`;
 }
 function renderInvoiceRows(list) {
   const box = document.getElementById('f_invoices');
-  const rows = (list && list.length) ? list : [{ no: '', amount: '' }];
-  box.innerHTML = rows.map(i => invRowHTML(i.no, i.amount)).join('');
+  const rows = (list && list.length) ? list : [{ no: '', amount: '', date: '' }];
+  box.innerHTML = rows.map(i => invRowHTML(i.no, i.amount, i.date)).join('');
   recalcInvoices();
 }
+// the date of the last row (so a new row can inherit it)
+function lastInvDate() {
+  const dates = [...document.querySelectorAll('#f_invoices .inv-date')].map(d => d.value).filter(Boolean);
+  return dates.length ? dates[dates.length - 1] : '';
+}
 function addInvoiceRow() {
-  document.getElementById('f_invoices').insertAdjacentHTML('beforeend', invRowHTML('', ''));
+  document.getElementById('f_invoices').insertAdjacentHTML('beforeend', invRowHTML('', '', lastInvDate()));
   const rows = document.querySelectorAll('#f_invoices .inv-row .inv-no');
   if (rows.length) rows[rows.length - 1].focus();
+}
+// set a date once → every row BELOW that is still blank takes the same date
+function invDateChanged(input) {
+  const v = input.value;
+  if (!v) return;
+  const all = [...document.querySelectorAll('#f_invoices .inv-date')];
+  for (let i = all.indexOf(input) + 1; i < all.length; i++) if (!all[i].value) all[i].value = v;
 }
 function getInvoicesFromForm() {
   return [...document.querySelectorAll('#f_invoices .inv-row')].map(r => ({
     no: r.querySelector('.inv-no').value.trim(),
     amount: Number(r.querySelector('.inv-amt').value) || 0,
+    date: r.querySelector('.inv-date').value || '',
   })).filter(i => i.no || i.amount);   // drop fully-empty rows
 }
 function recalcInvoices() {
@@ -1559,7 +1577,7 @@ async function saveCaseForm() {
   const existing = editingId ? cases.find(c => c.id === editingId) : null;
   const referrals = refRows.map((r, i) => ({ name: r.name, pct: r.pct,
     payments: (existing && existing.referrals && existing.referrals[i] && existing.referrals[i].payments) || [] }));
-  const invoiceDate = document.getElementById('f_invoiceDate').value || null;   // optional; reports stay on the transaction date
+  const invoiceDate = (invoices.find(i => i.date) || {}).date || null;   // case-level summary = first invoice's date; reports stay on the transaction date
   const data = { date, invoiceDate, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals,
     referralName: document.getElementById('f_referralName').value.trim() };
 
@@ -1811,7 +1829,7 @@ function applyScanResults(results) {
   const raw = []; let company = '', date = '';
   for (const r of results) {
     for (const inv of (r.invoices || [])) {
-      if (inv.no || Number(inv.amount) > 0) raw.push({ no: inv.no || '', amount: Number(inv.amount) || '' });
+      if (inv.no || Number(inv.amount) > 0) raw.push({ no: inv.no || '', amount: Number(inv.amount) || '', date: r.date || '' });   // date read from that page = the invoice date
     }
     if (!company && r.company) company = r.company;
     if (!date && r.date) date = r.date;
@@ -1824,7 +1842,8 @@ function applyScanResults(results) {
     if (!key) { noNumber.push(inv); continue; }
     const amt = Number(inv.amount) || 0;
     const cur = byNo.get(key);
-    if (!cur || amt > (Number(cur.amount) || 0)) byNo.set(key, { no: inv.no, amount: inv.amount });
+    if (!cur || amt > (Number(cur.amount) || 0)) byNo.set(key, { no: inv.no, amount: inv.amount, date: inv.date || (cur && cur.date) || '' });
+    else if (cur && !cur.date && inv.date) cur.date = inv.date;   // keep a date seen on any page of this invoice
   }
   const allInv = [...byNo.values(), ...noNumber];
   if (!allInv.length) { notify('Nothing readable found — please key it in manually.', true); return; }
@@ -1848,8 +1867,7 @@ function applyScanNews() {
   const { news, company, date } = pendingScan || { news: [], company: '', date: '' };
   const compEl = document.getElementById('f_company');
   if (company && compEl && !compEl.value.trim()) compEl.value = company;
-  // the date printed on the invoice is the INVOICE date — the transaction date stays as keyed (today)
-  if (date && document.getElementById('f_invoiceDate')) document.getElementById('f_invoiceDate').value = date;
+  // each scanned row carries the date read from its page (the INVOICE date); the transaction date stays as keyed (today)
   if (news.length) renderInvoiceRows([...getInvoicesFromForm(), ...news]);
   notify(news.length
     ? `📷 Added ${news.length} new invoice${news.length > 1 ? 's' : ''} — please CHECK, then set the %.`
@@ -2054,8 +2072,8 @@ function renderDetail() {
     ${(c.invoices && c.invoices.length) ? `<div class="leg" style="margin-bottom:14px">
       <h3>📄 Invoices (${c.invoices.length})</h3>
       <table style="margin-top:6px"><tbody>
-        ${c.invoices.map(i => `<tr><td>${esc(i.no) || '<span style="color:var(--muted)">(no number)</span>'}</td><td class="num"><b>${fmt(i.amount)}</b></td></tr>`).join('')}
-        <tr style="border-top:2px solid var(--tan-3)"><td><b>Total</b></td><td class="num"><b>${fmt(invoicesTotal(c.invoices))}</b></td></tr>
+        ${c.invoices.map(i => `<tr><td>${esc(i.no) || '<span style="color:var(--muted)">(no number)</span>'}</td><td style="color:var(--muted);white-space:nowrap">${i.date ? fmtDate(i.date) : '—'}</td><td class="num"><b>${fmt(i.amount)}</b></td></tr>`).join('')}
+        <tr style="border-top:2px solid var(--tan-3)"><td><b>Total</b></td><td></td><td class="num"><b>${fmt(invoicesTotal(c.invoices))}</b></td></tr>
       </tbody></table>
     </div>` : ''}
 
