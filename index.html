@@ -389,6 +389,12 @@
       <div class="field"><label>Selling %</label><input type="number" id="f_selling" step="0.01" min="0" oninput="updatePreview()"></div>
       <div class="field"><label>Cost %</label><input type="number" id="f_cost" step="0.01" min="0" value="1" oninput="updatePreview()"></div>
       <div class="field full">
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;font-weight:600;cursor:pointer;color:var(--text)">
+          <input type="checkbox" id="f_eInvoice" onchange="eInvoiceToggled(this.checked)" style="width:17px;height:17px;accent-color:var(--accent)">
+          e-Invoice <span style="color:var(--muted);font-weight:400">(sets Cost % to 1.5 instead of 1)</span>
+        </label>
+      </div>
+      <div class="field full">
         <label>Referral <span style="color:var(--muted); font-weight:400">— up to 2 · name + % (leave empty if none)</span></label>
         <div id="f_referrals"></div>
         <button type="button" class="btn-secondary btn-small" id="f_addRef" style="margin-top:6px" onclick="addReferralRow()">➕ Add Referral</button>
@@ -539,7 +545,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.8.2 (16 Oct 2026)';
+const APP_VERSION = '4.9.0 (17 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -609,7 +615,7 @@ const referralsFromRow = r => {
 const rowToCase = r => { const refs = referralsFromRow(r); return { id: r.id, date: r.case_date, invoiceDate: r.invoice_date || null, company: r.customer, pic: r.agent, amount: +r.amount,
   sellingPct: +r.selling_pct, costPct: +r.cost_pct, referralPct: refPctTotal(refs), referralName: refs.map(x => x.name).filter(Boolean).join(' + '), referrals: refs,
   invoiceIssued: !!r.invoice_issued, referralPaid: !!r.referral_paid, referralPaidDate: r.referral_paid_date || undefined,
-  forceClosed: !!r.force_closed, recurringId: r.recurring_id || null,
+  forceClosed: !!r.force_closed, recurringId: r.recurring_id || null, eInvoice: !!r.e_invoice,
   invoices: Array.isArray(r.invoices) ? r.invoices : [],
   customerPayments: r.customer_payments || [], supplierPayments: r.supplier_payments || [], clientPayouts: r.client_payouts || [],
   createdBy: r.created_by || null, updatedBy: r.updated_by || null, createdAt: r.created_at || null, updatedAt: r.updated_at || null,
@@ -625,7 +631,7 @@ const caseToRow = c => ({ company_id: companyId, case_date: c.date || null, invo
   referral_pct: (c.referrals && c.referrals.length) ? refPctTotal(c.referrals) : (c.referralPct || 0),
   referral_name: (c.referrals && c.referrals.length) ? c.referrals.map(x => x.name).filter(Boolean).join(' + ') : (c.referralName || ''),
   invoice_issued: !!c.invoiceIssued, referral_paid: referralsDone(c),
-  force_closed: !!c.forceClosed, recurring_id: c.recurringId || null,
+  force_closed: !!c.forceClosed, recurring_id: c.recurringId || null, e_invoice: !!c.eInvoice,
   referral_paid_date: lastRefPayDate(c) || c.referralPaidDate || null, customer_payments: c.customerPayments || [],
   supplier_payments: c.supplierPayments || [], client_payouts: c.clientPayouts || [],
   updated_at: new Date().toISOString(), updated_by: session?.user?.id || null });
@@ -1179,7 +1185,7 @@ function caseCardHTML(c, x) {
     : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>');
   return `<div class="ccard ${c.recurringId ? 'from-rec' : ''} ${c.cancelledAt ? 'cancelled' : ''}" onclick="openDetail('${c.id}')">
     <div class="cc-head">
-      <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</div>${invNoSummary(c) ? `<div class="cc-ref">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
+      <div style="min-width:0"><div class="cc-title">${c.recurringId ? '🔁 ' : ''}${esc(c.company)}${c.eInvoice ? ' <span class="badge na" title="e-Invoice (cost 1.5%)">e</span>' : ''}</div>${invNoSummary(c) ? `<div class="cc-ref">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div class="cc-ref">Ref: ${esc(c.referralName)}</div>` : ''}</div>
       ${statusBadge}
     </div>
     <div class="cc-meta">${fmtDate(c.date)}${c.invoiceDate ? ' · Inv ' + fmtDate(c.invoiceDate) : ''} · Agent: ${esc(c.pic) || '—'}</div>
@@ -1310,7 +1316,7 @@ function render() {
     ${pageList.map(({ c, x }) => `
       <tr class="row ${c.recurringId ? 'from-rec' : ''}" ${c.cancelledAt ? 'style="opacity:0.55"' : ''} onclick="openDetail('${c.id}')">
         <td>${fmtDate(c.date)}${c.invoiceDate ? `<div style="font-size:11px;color:var(--muted)">Inv ${fmtDate(c.invoiceDate)}</div>` : ''}</td>
-        <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${invNoSummary(c) ? `<div style="font-size:11px;color:var(--muted)">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
+        <td><b>${c.recurringId ? '🔁 ' : ''}${esc(c.company)}</b>${c.eInvoice ? ' <span class="badge na" title="e-Invoice (cost 1.5%)">e</span>' : ''}${invNoSummary(c) ? `<div style="font-size:11px;color:var(--muted)">📄 ${esc(invNoSummary(c))}</div>` : ''}${c.referralName ? `<div style="font-size:11px;color:var(--muted)">Ref: ${esc(c.referralName)}</div>` : ''}</td>
         <td>${esc(c.pic)}</td>
         <td class="num">${fmt(x.amount)}</td>
         <td onclick="event.stopPropagation()">${c.invoiceIssued
@@ -1369,6 +1375,12 @@ function currentAgent() {
   return sel === '__new' ? document.getElementById('f_pic').value.trim() : sel;
 }
 
+// e-Invoice tick drives the default Cost %: 1.5 for e-invoices, 1 otherwise (the field stays editable)
+function eInvoiceToggled(on) {
+  document.getElementById('f_cost').value = on ? 1.5 : 1;
+  updatePreview();
+}
+
 // picking an existing agent prefills their usual rates; "Add new agent" reveals the typing box
 function agentSelectChanged() {
   const sel = document.getElementById('f_pic_select').value;
@@ -1416,6 +1428,7 @@ function openCaseForm(id) {
   renderInvoiceRows(c ? ((c.invoices && c.invoices.length) ? c.invoices : (c.amount ? [{ no: '', amount: c.amount }] : [])) : []);
   document.getElementById('f_selling').value = c ? c.sellingPct : '';
   document.getElementById('f_cost').value = c ? c.costPct : 1;
+  document.getElementById('f_eInvoice').checked = c ? !!c.eInvoice : false;
   renderReferralRows(c ? (c.referrals || []).map(r => ({ name: r.name, pct: r.pct })) : []);
   updatePreview();
   document.getElementById('formOverlay').classList.add('show');
@@ -1577,7 +1590,8 @@ async function saveCaseForm() {
   const referrals = refRows.map((r, i) => ({ name: r.name, pct: r.pct,
     payments: (existing && existing.referrals && existing.referrals[i] && existing.referrals[i].payments) || [] }));
   const invoiceDate = (invoices.find(i => i.date) || {}).date || null;   // case-level summary = first invoice's date; reports stay on the transaction date
-  const data = { date, invoiceDate, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals,
+  const eInvoice = document.getElementById('f_eInvoice').checked;
+  const data = { date, invoiceDate, company, pic, amount, invoices, sellingPct, costPct, referralPct, referrals, eInvoice,
     referralName: document.getElementById('f_referralName').value.trim() };
 
   const wasEditing = !!editingId;
@@ -1776,7 +1790,9 @@ function parseInvoiceText(text) {
       if (w) company = walkBack(w.index, w[1]);
     }
   }
-  return { invoiceNo, amount, company, date };
+  // Malaysian e-invoices say "e-Invoice" / "e Invoice" on the document ("tax invoice" does not match)
+  const eInvoice = /\be[\s-]?invoice\b/i.test(joined);
+  return { invoiceNo, amount, company, date, eInvoice };
 }
 
 function normalizeScanDate(s) {
@@ -1820,18 +1836,19 @@ function extractInvoices(text) {
   if (items.length >= 2) invoices = items;
   else if (single.invoiceNo || single.amount) invoices = [{ no: single.invoiceNo, amount: single.amount }];
   else invoices = [];
-  return { invoices, company: single.company, date: single.date };
+  return { invoices, company: single.company, date: single.date, eInvoice: !!single.eInvoice };
 }
 
 let pendingScan = null;
 function applyScanResults(results) {
-  const raw = []; let company = '', date = '';
+  const raw = []; let company = '', date = '', eInv = false;
   for (const r of results) {
     for (const inv of (r.invoices || [])) {
       if (inv.no || Number(inv.amount) > 0) raw.push({ no: inv.no || '', amount: Number(inv.amount) || '', date: r.date || '' });   // date read from that page = the invoice date
     }
     if (!company && r.company) company = r.company;
     if (!date && r.date) date = r.date;
+    if (r.eInvoice) eInv = true;   // any page saying "e-Invoice" marks the case as one
   }
   // one invoice can span many pages: merge same invoice-no, keeping the biggest amount (its grand total).
   // different invoice numbers stay as separate lines (several invoices for the same customer in one PDF).
@@ -1856,7 +1873,7 @@ function applyScanResults(results) {
       dups.push({ no: (ex && ex.no) || inv.no, scanned: Number(inv.amount) || 0, current: Number(ex ? ex.amount : 0) || 0, caseId: c.id, caseName: c.company });
     } else news.push(inv);
   }
-  pendingScan = { news, company, date, dups };
+  pendingScan = { news, company, date, dups, eInvoice: eInv };
   if (dups.length) showDupReview(dups);
   else applyScanNews();
 }
@@ -1866,6 +1883,11 @@ function applyScanNews() {
   const { news, company, date } = pendingScan || { news: [], company: '', date: '' };
   const compEl = document.getElementById('f_company');
   if (company && compEl && !compEl.value.trim()) compEl.value = company;
+  // the PDF said "e-Invoice" → pre-tick it (which sets Cost % to 1.5); you still review before saving
+  if (pendingScan && pendingScan.eInvoice) {
+    const cb = document.getElementById('f_eInvoice');
+    if (cb && !cb.checked) { cb.checked = true; eInvoiceToggled(true); }
+  }
   // each scanned row carries the date read from its page (the INVOICE date); the transaction date stays as keyed (today)
   if (news.length) renderInvoiceRows([...getInvoicesFromForm(), ...news]);
   notify(news.length
@@ -2068,7 +2090,7 @@ function renderDetail() {
     <div class="detail-head">
       <div>
         <h2 style="margin-bottom:0">${esc(c.company)}</h2>
-        <div class="meta">Txn ${fmtDate(c.date)}${c.invoiceDate ? ' · Inv ' + fmtDate(c.invoiceDate) : ''} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}</div>
+        <div class="meta">Txn ${fmtDate(c.date)}${c.invoiceDate ? ' · Inv ' + fmtDate(c.invoiceDate) : ''} · Agent: ${esc(c.pic) || '-'} ${c.referralName ? '· Referral: ' + esc(c.referralName) : ''}${c.eInvoice ? ' · <span class="badge na" title="cost 1.5%">e-Invoice</span>' : ''}</div>
         ${userRole === 'owner' && (c.createdBy || c.updatedBy) ? `<div class="meta" style="font-size:11px">✍️ Created by <b>${esc(userMap[c.createdBy] || '—')}</b>${c.createdAt ? ' · ' + fmtDT(new Date(c.createdAt).getTime()) : ''}${c.updatedBy ? `<br>✏️ Last edit by <b>${esc(userMap[c.updatedBy] || '—')}</b>${c.updatedAt ? ' · ' + fmtDT(new Date(c.updatedAt).getTime()) : ''}` : ''}</div>` : ''}
       </div>
       ${x.closed ? '<span class="badge closed" style="font-size:14px;padding:6px 14px">CASE CLOSED</span>' : '<span class="badge open" style="font-size:14px;padding:6px 14px">OPEN</span>'}
