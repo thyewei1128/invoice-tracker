@@ -545,7 +545,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.9.0 (17 Oct 2026)';
+const APP_VERSION = '4.9.1 (20 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -1101,8 +1101,10 @@ function renderSummary(list, rangeOn) {
   const open = list.filter(c => !computed(c).closed);
   const closedCases = list.filter(c => computed(c).closed);
   const outstandingCustomer = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedCustomer - x.recvCustomer); }, 0);
-  const outstandingSupplier = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedSupplier - x.recvSupplier); }, 0);
-  const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.expectedPayout - x.paidClient); }, 0);
+  // supplier cash-in and client payout only become DUE in proportion to what the customer has paid
+  // (customer paid × (1 − cost%) / × (1 − selling%)) — not the full invoice amount up front.
+  const outstandingSupplier = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.recvCustomer * (1 - (Number(c.costPct) || 0) / 100) - x.recvSupplier); }, 0);
+  const outstandingPayout = open.reduce((a, c) => { const x = computed(c); return a + Math.max(0, x.recvCustomer * (1 - (Number(c.sellingPct) || 0) / 100) - x.paidClient); }, 0);
   const realized = closedCases.reduce((a, c) => a + computed(c).actualProfit, 0);
   const pending = open.reduce((a, c) => a + computed(c).profitAmount, 0);
   const balanceProfit = realizedProfitAll() - expensesAll() - withdrawnAll();
