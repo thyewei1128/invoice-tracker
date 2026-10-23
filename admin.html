@@ -140,7 +140,7 @@
       <div id="membersBox"></div>
       <div class="row-form">
         <select id="am_existing" style="min-width:170px"><option value="">— Add existing user —</option></select>
-        <select id="am_role1"><option value="staff">Staff</option><option value="owner">Owner</option></select>
+        <select id="am_role1"><option value="staff">Staff</option><option value="owner">Owner</option><option value="viewer">Viewer (read-only)</option></select>
         <button class="btn-secondary" onclick="addExistingMember()">Add</button>
       </div>
       <div class="row-form">
@@ -149,7 +149,7 @@
       </div>
       <div class="row-form">
         <input type="text" id="nu_pw" placeholder="Password (min 6)" style="min-width:120px; flex:1">
-        <select id="am_role2"><option value="staff">Staff</option><option value="owner">Owner</option></select>
+        <select id="am_role2"><option value="staff">Staff</option><option value="owner">Owner</option><option value="viewer">Viewer (read-only)</option></select>
         <button class="btn-accent" onclick="createMember()">+ Create User</button>
       </div>
       <div class="muted" style="margin-top:6px">Named users are unlimited — the limit is how many can be logged in at the SAME TIME (Max Concurrent Logins above). One user in several companies takes a login slot in each while active. Owners see profit &amp; withdrawals; staff cannot.</div>
@@ -162,7 +162,7 @@
 <script>
 const SUPA_URL = 'https://twuzrclcychwlklnhnzm.supabase.co';
 const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR3dXpyY2xjeWNod2xrbG5obnptIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODEyMzk4MTcsImV4cCI6MjA5NjgxNTgxN30.Z11HlfmXFcl458ceTh7ZJ50J-BtyP8HRWiZNRE_z4Jk';
-const ADMIN_VERSION = '1.2.0 (12 Jun 2026)';
+const ADMIN_VERSION = '1.3.0 (23 Oct 2026)';
 const SESSION_KEY = 'invAdminSession_v1';
 let session = null;
 try { session = JSON.parse(localStorage.getItem(SESSION_KEY)); } catch (e) {}
@@ -368,6 +368,7 @@ function renderMembers() {
       <td><select onchange="updateRole('${m.id}', this.value)">
         <option value="staff" ${m.role === 'staff' ? 'selected' : ''}>Staff</option>
         <option value="owner" ${m.role === 'owner' ? 'selected' : ''}>Owner</option>
+        <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>Viewer (read-only)</option>
       </select></td>
       <td style="white-space:nowrap">
         <button class="btn-secondary btn-small" onclick="resetPassword('${m.user_id}', '${esc(p.email || '')}')">Reset PW</button>

@@ -545,7 +545,7 @@
 </nav>
 
 <script>
-const APP_VERSION = '4.9.1 (20 Oct 2026)';
+const APP_VERSION = '5.0.0 (23 Oct 2026)';
 // testnet runs from the invoice-tracker-test repo: separate badge + separate saved login
 const IS_TEST = location.pathname.includes('-test');
 if (IS_TEST) document.addEventListener('DOMContentLoaded', () => { const e = document.querySelector('.eyebrow'); if (e) e.textContent += ' · 🧪 TESTNET'; });
@@ -774,6 +774,8 @@ const companySuspended = () => companyInfo && (companyInfo.status !== 'active' |
 function guardActive() {
   if (!session || !companyId) { notify('Please sign in first.', true); return false; }
   if (companySuspended()) { notify('⛔ Subscription suspended or expired — contact DLS Technology.', true); return false; }
+  // viewer = read-only (the database refuses their writes too; this just gives a friendly message)
+  if (userRole === 'viewer') { notify('👁 View-only account — you can look, but not change anything.', true); return false; }
   return true;
 }
 
@@ -895,11 +897,14 @@ async function completeReset() {
 }
 
 function applyRoleUI() {
-  const owner = userRole === 'owner';
+  const owner = userRole === 'owner', viewer = userRole === 'viewer';
   const fin = document.getElementById('bn-finance');
   if (fin) fin.style.display = owner ? '' : 'none';
   const fu = document.getElementById('filterUser');
   if (fu && !owner) { fu.style.display = 'none'; fu.value = ''; }
+  // viewers can't create cases: hide the ➕ tab (phone) and the + New Case button (desktop)
+  const fab = document.querySelector('.bn-center'); if (fab) fab.style.display = viewer ? 'none' : '';
+  const nb = document.querySelector('.toolbar .btn-accent'); if (nb) nb.style.visibility = viewer ? 'hidden' : '';
   if (owner) loadCompanyUsers();
 }
 
@@ -1206,8 +1211,8 @@ function caseCardHTML(c, x) {
       ${leg('3 · Paid to client', x.sPayout, x.paidClient, x.expectedPayout)}
     </div>
     <div class="cc-actions" onclick="event.stopPropagation()">
-      <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${c.cancelledAt ? 'View' : 'Update'}</button>
-      ${c.cancelledAt
+      <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${(c.cancelledAt || userRole === 'viewer') ? 'View' : 'Update'}</button>
+      ${userRole === 'viewer' ? '' : c.cancelledAt
         ? (userRole === 'owner' ? `<button class="btn-secondary btn-small" onclick="restoreCase('${c.id}')">↩️ Restore</button>` : '')
         : `<button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button><button class="btn-danger btn-small" ${pendingCancel === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="cancelCase('${c.id}')">${pendingCancel === c.id ? 'Confirm?' : 'Cancel'}</button>`}
       ${userRole === 'owner' ? `<button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>` : ''}
@@ -1330,8 +1335,8 @@ function render() {
         <td class="num"><b>${fmt(x.displayProfit)}</b><div style="font-size:11px;color:var(--muted)">${pct(x.displayPct)}</div></td>
         <td>${c.cancelledAt ? '<span class="badge none">Cancelled</span>' : (x.closed ? '<span class="badge closed">Closed</span>' : '<span class="badge open">Open</span>')}</td>
         <td class="actions-col" onclick="event.stopPropagation()">
-          <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${c.cancelledAt ? 'View' : 'Update'}</button>
-          ${c.cancelledAt
+          <button class="btn-primary btn-small" onclick="openDetail('${c.id}')">${(c.cancelledAt || userRole === 'viewer') ? 'View' : 'Update'}</button>
+          ${userRole === 'viewer' ? '' : c.cancelledAt
             ? (userRole === 'owner' ? `<button class="btn-secondary btn-small" onclick="restoreCase('${c.id}')">↩️ Restore</button>` : '')
             : `<button class="btn-secondary btn-small" onclick="openCaseForm('${c.id}')">Edit</button><button class="btn-danger btn-small" ${pendingCancel === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="cancelCase('${c.id}')">${pendingCancel === c.id ? 'Confirm?' : 'Cancel'}</button>`}
           ${userRole === 'owner' ? `<button class="btn-danger btn-small" ${pendingDelete === c.id ? 'style="background:var(--red);color:#fff"' : ''} onclick="deleteCase('${c.id}')">${pendingDelete === c.id ? 'Confirm?' : 'Del'}</button>` : ''}
@@ -2040,7 +2045,8 @@ function renderDetail() {
   if (!c) return;
   const saved = cases.find(s => s.id === detailId);
   const isCanc = !!(saved && saved.cancelledAt);
-  const locked = !!saved && (isCanc || (computed(saved).closed && !isUnlocked(detailId)));
+  const isViewer = userRole === 'viewer';
+  const locked = isViewer || (!!saved && (isCanc || (computed(saved).closed && !isUnlocked(detailId))));
   const x = computed(c);
 
   const LEG_CLASS = { customerPayments: 'leg-customer', supplierPayments: 'leg-supplier', clientPayouts: 'leg-payout' };
@@ -2113,7 +2119,7 @@ function renderDetail() {
       </tbody></table>
     </div>` : ''}
 
-    ${locked ? (isCanc ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🚫 This case is CANCELLED — view only, not counted in any figures.
+    ${locked ? (isViewer ? `<div style="background:var(--blue-soft);color:var(--blue);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">👁 View-only account — you can look, but not change anything.</div>` : isCanc ? `<div style="background:var(--red-soft);color:var(--red);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🚫 This case is CANCELLED — view only, not counted in any figures.
       ${saved.cancelledBy || saved.cancelledAt ? `<div style="margin-top:4px;font-weight:500">Cancelled by <b>${esc(userMap[saved.cancelledBy] || '—')}</b>${saved.cancelledAt ? ' · ' + fmtDT(new Date(saved.cancelledAt).getTime()) : ''}</div>` : ''}
       ${userRole === 'owner' ? `<div style="margin-top:8px"><button class="btn-primary btn-small" onclick="restoreCase('${detailId}')">↩️ Restore Case</button></div>` : ''}
     </div>` : `<div style="background:var(--amber-soft);color:var(--amber);border-radius:10px;padding:12px 14px;font-size:13px;font-weight:600;margin:14px 0">🔒 This case is CLOSED and locked — view only.
